@@ -12,7 +12,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::iter::once;
 use std::ptr::null_mut;
 
-// ウィンドウプロシージャを定義します。これはウィンドウが受け取るメッセージを処理します。
+//ウィンドウメッセージをアプリケーション内で振り分けるための通関手続きを行う
 extern "system" fn window_procedure(
     hwnd: HWND,
     msg: UINT,
@@ -32,7 +32,7 @@ extern "system" fn window_procedure(
     }
 }
 
-// Rustの文字列をnull終端のUTF-16文字列に変換します。これはWinAPI関数に文字列を渡すために必要です。
+// Rustの文字列をnull終端のUTF-16文字列に変換
 fn to_wstring(string: &str) -> Vec<u16> {
     OsStr::new(string).encode_wide().chain(once(0)).collect()
 }
@@ -41,8 +41,8 @@ fn main() {
     //ウィンドウクラスを識別するための名前
     let window_class_name = to_wstring("view window");
 
-    // ウィンドウクラスを定義します。これはウィンドウの見た目と動作を決定します。
-    let window_class = WNDCLASSW {
+    // これはウィンドウの見た目と動作を設定するウィンドウクラスの設定
+    let window_class  = WNDCLASSW {
         style: 0,
         lpfnWndProc: Some(window_procedure),
         cbClsExtra: 0,
@@ -56,10 +56,10 @@ fn main() {
     };
 
     unsafe {
-        // ウィンドウクラスを登録します。
+        //ウィンドウクラス登録
         RegisterClassW(&window_class);
 
-        // ウィンドウを作成します。
+        //ウィンドウ作成dwExStyle
         let hwnd = CreateWindowExW(
             0,
             window_class_name.as_ptr(),
