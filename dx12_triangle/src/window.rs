@@ -38,6 +38,7 @@ pub struct Window {
 }
 
 impl Window {
+    //自身のCreate関数
     pub fn new() -> Result<Self, &'static str> {
         // Create the window and return a new Window struct
         //ウィンドウクラスを識別名設定
@@ -89,10 +90,7 @@ impl Window {
         Ok(Window { hwnd: hwnd })
     }
 
-    pub fn get_hwnd(&self) -> HWND {
-        self.hwnd
-    }
-
+    //メッセージループ処理
     pub fn process_messages(&mut self) -> Result<bool, &'static str> {
         unsafe {
             let mut msg: MSG = std::mem::zeroed();
@@ -107,6 +105,12 @@ impl Window {
             }
         }
     }
+
+    /*
+    pub fn get_hwnd(&self) -> HWND {
+        self.hwnd
+    }
+     */
 }
 
 //文字列をnull終端のUTF-16文字列に変換
