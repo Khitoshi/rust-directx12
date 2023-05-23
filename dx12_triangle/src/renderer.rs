@@ -1,11 +1,18 @@
-use com_ptr::{hresult, ComPtr};
-use winapi::shared::dxgi::*;
+use mltg_bindings::Windows::Win32::Graphics::Dxgi::DXGI_CREATE_FACTORY_DEBUG;
+use winapi::shared::dxgi::IDXGIFactory;
+use winapi::shared::dxgi1_3::CreateDXGIFactory2;
+use winapi::shared::dxgi1_4::IDXGIFactory4;
+use winapi::shared::dxgi1_4::IDXGISwapChain3;
+use winapi::shared::guiddef::GUID;
+use winapi::shared::winerror::SUCCEEDED;
 use winapi::um::d3d12::{
-    ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12DescriptorHeap, ID3D12Device, ID3D12Fence,
-    ID3D12GraphicsCommandList, ID3D12Resource, ID3D12SwapChain3,ID3D12Debug
+    D3D12GetDebugInterface, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12DescriptorHeap,
+    ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
 };
+use winapi::um::d3d12sdklayers::ID3D12Debug;
+
 //エラー取得用
-pub struct Dx12Error{
+pub struct Dx12Error {
     message: String,
 }
 impl Dx12Error {
@@ -15,20 +22,20 @@ impl Dx12Error {
         }
     }
     //エラー出力
-    pub fn print_error(){
-        eprintln!("{}", message);
+    pub fn print_error(&self) {
+        eprintln!("{}", self.message);
     }
 }
 
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
-    dxgi_factory: *mut ID3D12DXGIFactory,
+    dxgi_factory: *mut IDXGIFactory,
     //デバイス
     device: *mut ID3D12Device,
     //コマンドキュー
     command_queue: *mut ID3D12CommandQueue,
     //スワップチェイン
-    swap_chain: *mut ID3D12SwapChain3,
+    swap_chain: *mut IDXGISwapChain3,
     /*
     //カラーバッファ
     color_buffer:*mut ID3D12Resource,
@@ -51,12 +58,11 @@ impl Dx12Resources {
     //other method
 
     //初期化method
-    pub fn new_dx12_resources() -> Result<Dx12Resources, Dx12Error> {
-
+    pub fn new_dx12_resources(&mut self) -> Result<Dx12Resources, Dx12Error> {
         //factory生成
-        match self::create_dx12_factory(){
-            Ok(factory) => dxgi_factory = factory,
-            Err(e) =>  e.print_error(),
+        match self.create_dx12_factory() {
+            Ok(factory) => self.dxgi_factory = factory,
+            Err(e) => e.print_error(),
         }
 
         Ok(Dx12Resources {
@@ -65,25 +71,38 @@ impl Dx12Resources {
         })
     }
 
-    fn create_dx12_factory() -> Result<ID3D12DXGIFactory,Dx12Error>{
-        let dxgi_factory_flags : i64;
-        dxgi_factory_flags = 1;
-        if cfg!(debug_assertions){
-            let debugController:*mut ID3D12Debug;
-            //デバッグコントローラーがあればバグレイヤーがあるDXGIを作成する
-            if SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))){
-                (*debugController).EnableDebugLayer();
+    //DXGIオブジェクト生成
+    fn create_dx12_factory() -> Result<IDXGIFactory, Dx12Error> {
+        // Define the interface IDs
+        let mut dxgi_factory_flags: UINT = 0;
+        const IID_IDXGIFactory4: GUID = IDXGIFactory4::uuidof();
+        const IID_ID3D12Debug: GUID = ID3D12Debug::uuidof();
+        // Your code...
+        let mut dxgi_factory: *mut IDXGIFactory4 = std::ptr::null_mut();
+        let mut debug_controller: *mut ID3D12Debug = std::ptr::null_mut();
 
-                //デバッグレイヤーの追加を有効にする
+        if cfg!(debug_assertions) {
+            let hr = unsafe {
+                D3D12GetDebugInterface(
+                    &IID_ID3D12Debug,
+                    &mut debug_controller as *mut _ as *mut *mut _,
+                )
+            };
+            if SUCCEEDED(hr) {
+                unsafe { (*debug_controller).EnableDebugLayer() };
                 dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
-                (*debugController).Release();
+                unsafe { (*debug_controller).Release() };
             }
         }
 
-        //factory生成
-        let hr = CreateDXGIFactory2(dxgi_factory_flags,IID_PPV_ARGS(dxgi_factory));
+        let hr = unsafe {
+            CreateDXGIFactory2(
+                dxgi_factory_flags,
+                &IID_IDXGIFactory4,
+                &mut dxgi_factory as *mut _ as *mut *mut _,
+            )
+        };
 
-        //生成チェック
         if SUCCEEDED(hr) {
             Ok(dxgi_factory)
         } else {
@@ -91,6 +110,7 @@ impl Dx12Resources {
         }
     }
 
+    //使用するデバイス情報取得
     fn create_dx12_device() -> Result<ID3D12Device, Dx12Error> {
         //使用している可能性のあるFEATURE_LEVELを列挙
         levels = D3D_FEATURE_LEVEL {
@@ -119,7 +139,30 @@ impl Dx12Resources {
         let use_adapter: *mut IDXGIAdapter;
 
         //グラフィックスカードが複数枚刺さっている場合にどれが一番メモリ容量が多いかを調べ一番多いものを使用する為のloop
-        let result = unsafe{factory}
+        let mut i = 0;
+        loop {
+            let result = unsafe { dxgi_factory.EnumAdapters(i, &mut adapter) };
+            if result == DXGI_ERROR_NOT_FOUND {
+                break;
+            }
+
+            let &mut desc: DXGI_ADAPTER_DESC;
+            (*adapter).GetDesc(&desc);
+
+            if (desc.DedicatedVideoMemory > video_memory_size) {
+                //こちらのビデオメモリの方が多いので、こちらを使う。
+                if (adapter_max_video_memory != nullptr) {
+                    (*adapter_max_video_memory).Release();
+                }
+                adapter_max_video_memory = adapter_temp;
+                //IDXGIAdapterを登録するたびにインクリメントしないといけないのでaddref(インクリメント)している
+                (*adapter_max_video_memory).AddRef();
+                video_memory_size = desc.DedicatedVideoMemory;
+            }
+
+            //インクリメント i++はcargoに怒られた...
+            i += 1
+        }
         Ok()
     }
 }

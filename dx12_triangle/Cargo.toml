@@ -6,4 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-winapi = { version = "0.3.9", features = ["winuser", "wingdi", "libloaderapi"] }
+mltg_bindings;
+winapi = { version = "0.3.9", features = [
+    "winuser",
+    "wingdi",
+    "libloaderapi",
+    "dxgi",
+    "d3d12",
+    "d3d12sdklayers",
+    "dxgi1_4",
+    "winerror",
+    "dxgi1_3",
+] }
