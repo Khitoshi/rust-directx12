@@ -218,7 +218,7 @@ impl Dx12Resources {
 
     //create_commandqueue 生成
     fn create_commandqueue(&self) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
-        //Command queue setting
+        // コマンドキューの設定
         const command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
             Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
             Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
@@ -237,13 +237,14 @@ impl Dx12Resources {
             ))),
         }
     }
-    /*
+
+    //スワップチェイン作成
     fn create_swapchain(
         &self,
         hwnd: &HWND,
         frame_buffer_width: u32,
         frame_buffer_hegith: u32,
-    ) -> std::result::Result<IDXGIFactory4, Dx12Error> {
+    ) -> std::result::Result<IDXGISwapChain4, Dx12Error> {
         //スワップチェインの設定
         let swap_chain_desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
             BufferCount: FRAME_BUFFER_COUNT,
@@ -260,7 +261,8 @@ impl Dx12Resources {
         };
 
         //スワップチェイン1を作成
-        let mut swap_chain: Option<IDXGISwapChain1>;
+        //TODO:swapchain1を定義せずに直接swapchain4をcastする
+        let mut swap_chain1: Option<IDXGISwapChain1> = None;
         match unsafe {
             self.dxgi_factory.CreateSwapChainForHwnd(
                 &self.command_queue,
@@ -270,7 +272,9 @@ impl Dx12Resources {
                 None,
             )
         } {
-            Ok(sc) => swap_chain = Some(sc),
+            Ok(sc) => {
+                swap_chain1 = Some(sc);
+            }
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create swap chain: {:?}",
@@ -279,10 +283,20 @@ impl Dx12Resources {
             }
         }
 
-        //スワップチェイン4のインターフェース取得
-        swap_chain.unwrap().QueryInterface()
+        //swapchain1 を swapchain4に変換する
+        let swap_chain4: Option<IDXGISwapChain4> =
+            match swap_chain1.unwrap().cast::<IDXGISwapChain4>() {
+                Ok(sc) => Some(sc),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create swap chian:{:?}",
+                        err
+                    )))
+                }
+            };
+
+        Ok(swap_chain4.unwrap())
     }
-     */
 }
 
 /*
