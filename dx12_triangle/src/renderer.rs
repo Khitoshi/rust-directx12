@@ -30,10 +30,14 @@ pub struct Dx12Resources {
     dxgi_factory: IDXGIFactory4,
     //デバイス
     device: ID3D12Device,
-    //リソース
-    resources: Option<Resources>,
     //コマンドキュー
     command_queue: ID3D12CommandQueue,
+
+    //スワップチェイン
+    swap_chain: IDXGISwapChain4,
+
+    //現在のバッグバッファインデックス
+    current_back_buffer_index: u32,
 }
 
 impl Dx12Resources {
@@ -296,6 +300,35 @@ impl Dx12Resources {
             };
 
         Ok(swap_chain4.unwrap())
+    }
+
+    //ウィンドウをフルスクリーンに関連付ける
+    fn associate_the_window_with_full_screen(
+        &self,
+        hwnd: &HWND,
+    ) -> std::result::Result<(), Dx12Error> {
+        //TODO:フルスクリーンに対応させる
+        //TODO:imguiでウィンドウ <-> フルスクリーンを行き来できるようにする
+
+        //ウィンドウの設定をする
+        match unsafe {
+            self.dxgi_factory
+                .MakeWindowAssociation(*hwnd, DXGI_MWA_NO_ALT_ENTER)
+        } {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create swap chain: {:?}",
+                    err
+                )))
+            }
+        }
+    }
+
+    //バッグバッファ取得
+    fn get_current_back_buffer_index(&self) {
+        //現在のバックバッファインデックスを取得
+        self.current_back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
     }
 }
 
