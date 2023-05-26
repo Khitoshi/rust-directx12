@@ -8,7 +8,7 @@ use windows::{
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-
+const FRAME_BUFFER_COUNT: u32 = 2;
 //エラー取得用
 pub struct Dx12Error {
     message: String,
@@ -27,7 +27,13 @@ impl Dx12Error {
 
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
-    dxgi_factory: *mut IDXGIFactory4,
+    dxgi_factory: IDXGIFactory4,
+    //デバイス
+    device: ID3D12Device,
+    //リソース
+    resources: Option<Resources>,
+    //コマンドキュー
+    command_queue: ID3D12CommandQueue,
 }
 
 impl Dx12Resources {
@@ -211,9 +217,7 @@ impl Dx12Resources {
     }
 
     //create_commandqueue 生成
-    fn create_commandqueue(
-        device: &ID3D12Device,
-    ) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
+    fn create_commandqueue(&self) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
         //Command queue setting
         const command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
             Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -222,7 +226,10 @@ impl Dx12Resources {
         };
 
         //生成&生成チェック
-        match unsafe { device.CreateCommandQueue::<ID3D12CommandQueue>(&command_queue_desc) } {
+        match unsafe {
+            self.device
+                .CreateCommandQueue::<ID3D12CommandQueue>(&command_queue_desc)
+        } {
             Ok(cmd_queue) => Ok(cmd_queue),
             Err(err) => Err(Dx12Error::new(&format!(
                 "Failed to create command queue: {:?}",
@@ -230,6 +237,52 @@ impl Dx12Resources {
             ))),
         }
     }
+    /*
+    fn create_swapchain(
+        &self,
+        hwnd: &HWND,
+        frame_buffer_width: u32,
+        frame_buffer_hegith: u32,
+    ) -> std::result::Result<IDXGIFactory4, Dx12Error> {
+        //スワップチェインの設定
+        let swap_chain_desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
+            BufferCount: FRAME_BUFFER_COUNT,
+            Width: frame_buffer_width,
+            Height: frame_buffer_hegith,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            ..Default::default()
+        };
+
+        //スワップチェイン1を作成
+        let mut swap_chain: Option<IDXGISwapChain1>;
+        match unsafe {
+            self.dxgi_factory.CreateSwapChainForHwnd(
+                &self.command_queue,
+                *hwnd,
+                &swap_chain_desc,
+                None,
+                None,
+            )
+        } {
+            Ok(sc) => swap_chain = Some(sc),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create swap chain: {:?}",
+                    err
+                )));
+            }
+        }
+
+        //スワップチェイン4のインターフェース取得
+        swap_chain.unwrap().QueryInterface()
+    }
+     */
 }
 
 /*
