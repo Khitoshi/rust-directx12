@@ -1,16 +1,15 @@
-extern crate winapi;
-use winapi::um::winuser::{
-    CreateWindowExW, DefWindowProcW, GetMessageW, PostQuitMessage, RegisterClassW,
-    TranslateMessage, DispatchMessageW, MSG, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-    CW_USEDEFAULT, WM_DESTROY
-};
+use std::ffi::OsStr;
+use std::iter::once;
+use std::os::windows::ffi::OsStrExt;
+use std::ptr::null_mut;
 use winapi::shared::minwindef::{LPARAM, LRESULT, UINT, WPARAM};
 use winapi::shared::windef::HWND;
 use winapi::um::libloaderapi::GetModuleHandleW;
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
-use std::iter::once;
-use std::ptr::null_mut;
+use winapi::um::winuser::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
+    RegisterClassW, TranslateMessage, CW_USEDEFAULT, MSG, WM_DESTROY, WNDCLASSW,
+    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+};
 
 //ウィンドウメッセージをアプリケーション内で振り分けるための通関手続きを行う
 extern "system" fn window_procedure(
@@ -27,7 +26,7 @@ extern "system" fn window_procedure(
                 0
             }
             // 他のメッセージはデフォルトの処理に任せます。
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam) ,
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
     }
 }
@@ -42,7 +41,7 @@ fn main() {
     let window_class_name = to_wstring("view window");
 
     // これはウィンドウの見た目と動作を設定するウィンドウクラスの設定
-    let window_class  = WNDCLASSW {
+    let window_class = WNDCLASSW {
         style: 0,
         lpfnWndProc: Some(window_procedure),
         cbClsExtra: 0,

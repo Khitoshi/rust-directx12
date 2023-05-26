@@ -1,15 +1,13 @@
-use mltg_bindings::Windows::Win32::Graphics::Dxgi::DXGI_CREATE_FACTORY_DEBUG;
-use winapi::shared::dxgi::IDXGIFactory;
-use winapi::shared::dxgi1_3::CreateDXGIFactory2;
-use winapi::shared::dxgi1_4::IDXGIFactory4;
-use winapi::shared::dxgi1_4::IDXGISwapChain3;
-use winapi::shared::guiddef::GUID;
-use winapi::shared::winerror::SUCCEEDED;
-use winapi::um::d3d12::{
-    D3D12GetDebugInterface, ID3D12CommandAllocator, ID3D12CommandQueue, ID3D12DescriptorHeap,
-    ID3D12Device, ID3D12Fence, ID3D12GraphicsCommandList, ID3D12Resource,
+use windows::{
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
+    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*,
+    Win32::Graphics::Dxgi::IDXGIFactory6, Win32::Graphics::Dxgi::*,
+    Win32::System::LibraryLoader::*, Win32::System::Threading::*,
+    Win32::UI::WindowsAndMessaging::*,
 };
-use winapi::um::d3d12sdklayers::ID3D12Debug;
+
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
 
 //エラー取得用
 pub struct Dx12Error {
@@ -29,151 +27,186 @@ impl Dx12Error {
 
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
-    dxgi_factory: *mut IDXGIFactory,
-    //デバイス
-    device: *mut ID3D12Device,
-    //コマンドキュー
-    command_queue: *mut ID3D12CommandQueue,
-    //スワップチェイン
-    swap_chain: *mut IDXGISwapChain3,
-    /*
-    //カラーバッファ
-    color_buffer:*mut ID3D12Resource,
-    //深度バッファ
-    depth_buffer: *mut ID3D12Resource,
-    //コマンドアロケーター
-    command_allocator: * mut ID3D12CommandAllocator,
-    //コマンドリスト
-    command_list:*mut ID3D12GraphicsCommandList,
-    //深度
-    descriptor_heap: *mut ID3D12DescriptorHeap,
-    Heap_rtv:*mut ID3D12DescriptorHeap,
-    fence:*mut ID3D12Fence,
-    descriptor_heap_dsv:*mut ID3D12DescriptorHeap,
-    descriptor_heap_cbv:*mut ID3D12DescriptorHeap,
-    */
+    dxgi_factory: *mut IDXGIFactory4,
 }
 
 impl Dx12Resources {
     //other method
 
-    //初期化method
-    pub fn new_dx12_resources(&mut self) -> Result<Dx12Resources, Dx12Error> {
-        //factory生成
-        match self.create_dx12_factory() {
-            Ok(factory) => self.dxgi_factory = factory,
-            Err(e) => e.print_error(),
-        }
+    fn new() {}
+}
 
-        Ok(Dx12Resources {
-            device,
-            // 他のフィールドの初期化...
-        })
-    }
-
-    //DXGIオブジェクト生成
-    fn create_dx12_factory() -> Result<IDXGIFactory, Dx12Error> {
-        // Define the interface IDs
-        let mut dxgi_factory_flags: UINT = 0;
-        const IID_IDXGIFactory4: GUID = IDXGIFactory4::uuidof();
-        const IID_ID3D12Debug: GUID = ID3D12Debug::uuidof();
-        // Your code...
-        let mut dxgi_factory: *mut IDXGIFactory4 = std::ptr::null_mut();
-        let mut debug_controller: *mut ID3D12Debug = std::ptr::null_mut();
-
+//
+impl Dx12Resources {
+    fn create_factory() -> std::result::Result<IDXGIFactory4, Dx12Error> {
+        //デバッグ時のみ入る
         if cfg!(debug_assertions) {
-            let hr = unsafe {
-                D3D12GetDebugInterface(
-                    &IID_ID3D12Debug,
-                    &mut debug_controller as *mut _ as *mut *mut _,
-                )
-            };
-            if SUCCEEDED(hr) {
-                unsafe { (*debug_controller).EnableDebugLayer() };
-                dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
-                unsafe { (*debug_controller).Release() };
+            unsafe {
+                let mut debug: Option<ID3D12Debug> = None;
+                if let Some(debug) = D3D12GetDebugInterface(&mut debug).ok().and(debug) {
+                    debug.EnableDebugLayer();
+                }
             }
         }
 
-        let hr = unsafe {
-            CreateDXGIFactory2(
-                dxgi_factory_flags,
-                &IID_IDXGIFactory4,
-                &mut dxgi_factory as *mut _ as *mut *mut _,
-            )
+        //不変にしたいので別のifにしている
+        //デバッグの場合デバッグフラグを立てる
+        let dxgi_factory_flags = if cfg!(debug_assertions) {
+            DXGI_CREATE_FACTORY_DEBUG
+        } else {
+            0
         };
 
-        if SUCCEEDED(hr) {
-            Ok(dxgi_factory)
-        } else {
-            Err(Dx12Error::new("Failed to create DX12 factory"))
+        //dxgi factory生成
+        let dxgi_factory_result = unsafe { CreateDXGIFactory2(dxgi_factory_flags) };
+
+        //factory 生成チェック
+        match dxgi_factory_result {
+            Ok(dxgi_factory) => {
+                // 成功した場合の処理
+                println!("Factory creation succeeded");
+                Ok(dxgi_factory)
+            }
+            Err(err) => {
+                // 失敗した場合の処理
+                //println!("Factory creation failed with error: {}", err);
+                let errstr: String = format!("Factory creation failed with error:{}", err);
+                Err(Dx12Error::new(&errstr))
+            }
         }
     }
 
-    //使用するデバイス情報取得
-    fn create_dx12_device() -> Result<ID3D12Device, Dx12Error> {
-        //使用している可能性のあるFEATURE_LEVELを列挙
-        levels = D3D_FEATURE_LEVEL {
-            D3D_FEATURE_LEVEL_12_1,
-            D3D_FEATURE_LEVEL_12_0,
-            D3D_FEATURE_LEVEL_11_1,
-            D3D_FEATURE_LEVEL_11_0,
-        };
+    fn create_device(factory: IDXGIFactory4) -> std::result::Result<ID3D12Device, Dx12Error> {
+        //主要なGPUベンダー定義
+        enum GpuVender {
+            GpuVenderNvidia, //NVIDIA
+            GpuVenderAmd,    //AMD
+            GpuVenderIntel,  //Intel
 
-        //GPUベンダー定義。
-        enum GPU_Vender {
-            GPU_VENDER_NVIDIA, //NVIDIA
-            GPU_VENDER_AMD,    //Intel
-            GPU_VENDER_INTEL,  //AMD
+            NumGpuVender, //Vender数
+        }
 
-            NUM_GPU_VENDER, //Vender数
-        };
-
-        //アダプター定義
-        let adapter: *mut IDXGIAdapter;
-        //各ベンダーのアダプター
-        let adapter_vender: [*mut IDXGIAdapter; NUM_GPU_VENDER];
-        //最大ビデオメモリのアダプタ
-        let adapter_max_video_memory: *mut IDXGIAdapter;
-        //最終的に使用するアダプタ
-        let use_adapter: *mut IDXGIAdapter;
-
-        //グラフィックスカードが複数枚刺さっている場合にどれが一番メモリ容量が多いかを調べ一番多いものを使用する為のloop
-        let mut i = 0;
+        //大手venderのGPUを持つアダプタ
+        let mut adapter_vender: [Option<IDXGIAdapter>; GpuVender::NumGpuVender as usize];
+        //最大のビデオサイズを持つアダプタ 主要なGPUがない場合に使用される
+        let mut adapter_maximum_video_memory: Option<IDXGIAdapter>;
+        //ビデオメモリー比較用
+        let mut video_memory_size = 0;
+        //ここはグラフィックスカードが複数枚刺さっている場合にどれが一番メモリ容量が多いかを調べ一番多いものを使用する為のloop
+        let mut i: u32 = 0;
         loop {
-            let result = unsafe { dxgi_factory.EnumAdapters(i, &mut adapter) };
-            if result == DXGI_ERROR_NOT_FOUND {
+            let adapter_result = unsafe { factory.EnumAdapters(i) };
+
+            //アダプター取得
+            let adapter = match adapter_result {
+                Ok(adapter) => adapter,
+                Err(err) => {
+                    println!("EnumAdapters adapter error:{}", err);
+                    break;
+                }
+            };
+
+            //グラフィックス能力のあるdescを取得
+            let mut desc: DXGI_ADAPTER_DESC = DXGI_ADAPTER_DESC::default();
+            let desc_result = unsafe { adapter.GetDesc(&mut desc) };
+            //desc取得チェック
+            if let Err(err) = desc_result {
+                println!("GetDesc error: {}", err);
                 break;
             }
 
-            let &mut desc: DXGI_ADAPTER_DESC;
-            (*adapter).GetDesc(&desc);
-
-            if (desc.DedicatedVideoMemory > video_memory_size) {
-                //こちらのビデオメモリの方が多いので、こちらを使う。
-                if (adapter_max_video_memory != nullptr) {
-                    (*adapter_max_video_memory).Release();
-                }
-                adapter_max_video_memory = adapter_temp;
-                //IDXGIAdapterを登録するたびにインクリメントしないといけないのでaddref(インクリメント)している
-                (*adapter_max_video_memory).AddRef();
+            //ビデオメモリの比較を行う
+            if desc.DedicatedVideoMemory > video_memory_size {
+                //ここで取得したアダプタはAMDやINTEL等のGPUがない場合に使用するアダプタ
+                //現在取得しているdescのビデオメモリの方が多いので更新する
+                adapter_maximum_video_memory = Some(adapter.clone());
                 video_memory_size = desc.DedicatedVideoMemory;
             }
 
-            //インクリメント i++はcargoに怒られた...
-            i += 1
+            //文字列変換処理
+            //文字列内で最初のnull文字(0)を見つけるか見つからなければ配列の長さを返す
+            let end_position = desc
+                .Description
+                .iter()
+                .position(|&x| x == 0)
+                .unwrap_or_else(|| desc.Description.len());
+            //先ほど見つけた終端位置までの部分を取り出しOsStringに変換する
+            let os_string: OsString = OsStringExt::from_wide(&desc.Description[0..end_position]);
+            //OsStringをUTF-8文字列に変換する
+            let description = os_string.to_string_lossy();
+
+            //各GPUベンダーの処理
+            if description.contains("NVIDIA") {
+                // NVIDIAの処理
+                adapter_vender[GpuVender::GpuVenderNvidia as usize] = Some(adapter.clone());
+            } else if description.contains("AMD") {
+                // AMDの処理
+                adapter_vender[GpuVender::GpuVenderAmd as usize] = Some(adapter.clone());
+            } else if description.contains("Intel") {
+                // Intelの処理
+                adapter_vender[GpuVender::GpuVenderIntel as usize] = Some(adapter.clone());
+            }
+
+            //インクリ
+            i = i + 1;
         }
-        Ok()
+
+        //使用するアダプタを決める(現在はintelが最優先)
+        // NVIDIA >> AMD >> intel >> other
+        let mut use_adapter: Option<IDXGIAdapter> = None;
+        if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
+            //NVIDIA
+            use_adapter = adapter_vender[GpuVender::GpuVenderNvidia as usize].clone();
+        } else if adapter_vender[GpuVender::GpuVenderAmd as usize].is_some() {
+            //AMD
+            use_adapter = adapter_vender[GpuVender::GpuVenderAmd as usize].clone();
+        } else if adapter_vender[GpuVender::GpuVenderIntel as usize].is_some() {
+            //INTEL
+            use_adapter = adapter_vender[GpuVender::GpuVenderIntel as usize].clone();
+        } else {
+            //主要ベンダ以外
+            use_adapter = adapter_maximum_video_memory.clone();
+        }
+
+        //pcによってレベルが異なるため 使用している可能性のあるFEATURE_LEVELを列挙
+        const feature_levels: [D3D_FEATURE_LEVEL; 4] = [
+            D3D_FEATURE_LEVEL_12_1, //Direct3D 12.1の機能
+            D3D_FEATURE_LEVEL_12_0, //Direct3D 12.0の機能
+            D3D_FEATURE_LEVEL_11_1, //Direct3D 11.1の機能
+            D3D_FEATURE_LEVEL_11_0, //Direct3D 11.0の機能
+        ];
+
+        //device生成処理loop
+        //TODO:ネストが深いので改善する
+        for level in feature_levels {
+            let mut device: Option<ID3D12Device> = None;
+            if let Some(ref adapter) = use_adapter {
+                match unsafe { D3D12CreateDevice(adapter, level, &mut device) } {
+                    Ok(_) => {
+                        //生成に成功したのでdeviceを返す
+                        return Ok(device.unwrap());
+                    }
+                    Err(err) => {
+                        //エラーの場合、次のfeature_levelで試みる
+                        continue;
+                    }
+                }
+            }
+        }
+
+        Err(Dx12Error::new("デバイスの生成に失敗"))
     }
 }
 
+/*
 //破棄処理
 impl Drop for Dx12Resources {
     fn drop(&mut self) {
         unsafe {
+            (*self.dxgi_factory).Release();
             (*self.device).Release();
             (*self.swap_chain).Release();
-            (*self.dxgi_factory).Release();
         }
     }
 }
+*/
