@@ -76,6 +76,7 @@ impl Dx12Resources {
         }
     }
 
+    //デバイスを生成
     fn create_device(factory: IDXGIFactory4) -> std::result::Result<ID3D12Device, Dx12Error> {
         //主要なGPUベンダー定義
         enum GpuVender {
@@ -156,16 +157,28 @@ impl Dx12Resources {
         let mut use_adapter: Option<IDXGIAdapter> = None;
         if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
             //NVIDIA
-            use_adapter = adapter_vender[GpuVender::GpuVenderNvidia as usize].clone();
+            use_adapter = Some(
+                adapter_vender[GpuVender::GpuVenderNvidia as usize]
+                    .clone()
+                    .unwrap(),
+            );
         } else if adapter_vender[GpuVender::GpuVenderAmd as usize].is_some() {
             //AMD
-            use_adapter = adapter_vender[GpuVender::GpuVenderAmd as usize].clone();
+            use_adapter = Some(
+                adapter_vender[GpuVender::GpuVenderAmd as usize]
+                    .clone()
+                    .unwrap(),
+            );
         } else if adapter_vender[GpuVender::GpuVenderIntel as usize].is_some() {
             //INTEL
-            use_adapter = adapter_vender[GpuVender::GpuVenderIntel as usize].clone();
+            use_adapter = Some(
+                adapter_vender[GpuVender::GpuVenderIntel as usize]
+                    .clone()
+                    .unwrap(),
+            );
         } else {
             //主要ベンダ以外
-            use_adapter = adapter_maximum_video_memory.clone();
+            use_adapter = Some(adapter_maximum_video_memory.clone().unwrap());
         }
 
         //pcによってレベルが異なるため 使用している可能性のあるFEATURE_LEVELを列挙
@@ -195,6 +208,27 @@ impl Dx12Resources {
         }
 
         Err(Dx12Error::new("デバイスの生成に失敗"))
+    }
+
+    //create_commandqueue 生成
+    fn create_commandqueue(
+        device: &ID3D12Device,
+    ) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
+        //Command queue setting
+        const command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
+            Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
+            Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
+            ..Default::default()
+        };
+
+        //生成&生成チェック
+        match unsafe { device.CreateCommandQueue::<ID3D12CommandQueue>(&command_queue_desc) } {
+            Ok(cmd_queue) => Ok(cmd_queue),
+            Err(err) => Err(Dx12Error::new(&format!(
+                "Failed to create command queue: {:?}",
+                err
+            ))),
+        }
     }
 }
 
