@@ -311,6 +311,10 @@ impl Dx12Resources {
                 }
             };
 
+        //バッグバッファ取得
+        self.current_back_buffer_index =
+            unsafe { swap_chain4.unwrap().GetCurrentBackBufferIndex() };
+
         Ok(swap_chain4.unwrap())
     }
 
@@ -335,13 +339,6 @@ impl Dx12Resources {
                 )))
             }
         }
-    }
-
-    //バッグバッファ取得
-    fn get_current_back_buffer_index(&self) -> u32 {
-        //現在のバックバッファインデックスを取得
-        //self.current_back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
-        return unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
     }
 
     //rtv ディスクリプタヒープ生成
