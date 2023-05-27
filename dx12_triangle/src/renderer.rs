@@ -25,6 +25,8 @@ impl Dx12Error {
     }
 }
 
+//TODO:Dx12用のrsファイルを作成する
+
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
     dxgi_factory: IDXGIFactory4,
@@ -32,10 +34,20 @@ pub struct Dx12Resources {
     device: ID3D12Device,
     //コマンドキュー
     command_queue: ID3D12CommandQueue,
-
     //スワップチェイン
     swap_chain: IDXGISwapChain4,
-
+    //レンダリングターゲットビューのディスクリプタヒープ
+    rtv_heap: Option<ID3D12DescriptorHeap>,
+    //レンダーターゲットビューのサイズ
+    rtv_descriptor_size: u32,
+    //深度ステンシルビューのディスクリプタヒープ
+    dsv_heap: Option<ID3D12DescriptorHeap>,
+    //深度ステンシルビューのサイズ
+    dsv_descriptor_size: u32,
+    //フレームバッファ用のレンダリングターゲット
+    render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize],
+    //深度ステンシルバッファ
+    depth_stencil_buffer: Option<ID3D12Resource>,
     //現在のバッグバッファインデックス
     current_back_buffer_index: u32,
 }
@@ -326,9 +338,172 @@ impl Dx12Resources {
     }
 
     //バッグバッファ取得
-    fn get_current_back_buffer_index(&self) {
+    fn get_current_back_buffer_index(&self) -> u32 {
         //現在のバックバッファインデックスを取得
-        self.current_back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+        //self.current_back_buffer_index = unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+        return unsafe { self.swap_chain.GetCurrentBackBufferIndex() };
+    }
+
+    //rtv ディスクリプタヒープ生成
+    fn create_rtv_descriptor_heap_for_frame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+        //レンダリングターゲットビューのディスクリプタヒープ用のディスクリプタヒープデスクを作成
+        let desc: D3D12_DESCRIPTOR_HEAP_DESC = D3D12_DESCRIPTOR_HEAP_DESC {
+            NumDescriptors: FRAME_BUFFER_COUNT,
+            Type: D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+            ..Default::default()
+        };
+
+        match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+            Ok(rtv) => {
+                self.rtv_heap = Some(rtv);
+            }
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create rtv descriptor heap: {:?}",
+                    err
+                )))
+            }
+        }
+
+        //ディスクリプタのサイズを取得
+        //TODO:単一責任理論に反している気がするので要検討
+        self.rtv_descriptor_size = unsafe {
+            self.device
+                .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
+        };
+
+        Ok(())
+    }
+
+    //dsv ディスクリプタヒープ生成
+    fn create_dsv_descriptor_heap_for_frame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+        //深度ステンシルビューのディスクリプタヒープ用のディスクリプタヒープデスクを作成
+        let desc: D3D12_DESCRIPTOR_HEAP_DESC = D3D12_DESCRIPTOR_HEAP_DESC {
+            NumDescriptors: 1,
+            Type: D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+            ..Default::default()
+        };
+
+        //深度ステンシルビューのディスクリプタヒープ作成
+        match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+            Ok(dsv) => {
+                self.dsv_heap = Some(dsv);
+            }
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create dsv descriptor heap: {:?}",
+                    err
+                )))
+            }
+        }
+
+        //ディスクリプタのサイズを取得。
+        //TODO:単一責任理論に反している可能性があるので要検討
+        self.dsv_descriptor_size = unsafe {
+            self.device
+                .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)
+        };
+
+        Ok(())
+    }
+
+    //フレームバッファ用のレンダーターゲットバッファの生成
+    fn create_rtv_for_fame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+        //ヒープの先頭を表すCPUディスクリプタハンドルを取得
+        let mut rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
+            unsafe { self.rtv_heap.unwrap().GetCPUDescriptorHandleForHeapStart() };
+
+        //フロントバッファをバックバッファ用のRTVを作成
+        for i in 0..FRAME_BUFFER_COUNT as u32 {
+            //フレームバッファ用レンダーターゲット取得
+            let render_target: ID3D12Resource = match unsafe { self.swap_chain.GetBuffer(i) } {
+                Ok(rt) => rt,
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create rtv descriptor heap: {:?}",
+                        err
+                    )))
+                }
+            };
+
+            //レンダーターゲットビューの生成
+            unsafe {
+                self.device
+                    .CreateRenderTargetView(&render_target, None, rtv_handle)
+            };
+
+            //生成したレンダーターゲットを登録
+            self.render_targets[i as usize] = render_target;
+
+            //ポインタを渡したのでずらす
+            rtv_handle.ptr += self.rtv_descriptor_size as usize;
+        }
+
+        Ok(())
+    }
+
+    //フレームバッファ用の深度ステンシルバッファの生成
+    fn create_dsv_for_fame_buffer(
+        &self,
+        frame_buffer_width: u64,
+        frame_buffer_height: u32,
+    ) -> std::result::Result<(), Dx12Error> {
+        //画面クリア値設定
+        let dsv_clear_value: D3D12_CLEAR_VALUE = D3D12_CLEAR_VALUE {
+            Format: DXGI_FORMAT_D32_FLOAT,
+            Anonymous: D3D12_CLEAR_VALUE_0 {
+                DepthStencil: D3D12_DEPTH_STENCIL_VALUE {
+                    Depth: 1.0,
+                    Stencil: 0,
+                },
+            },
+        };
+
+        //リソースのデスク
+        let desc: D3D12_RESOURCE_DESC = D3D12_RESOURCE_DESC {
+            Dimension: D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            Alignment: 0,
+            Width: frame_buffer_width,
+            Height: frame_buffer_height,
+            DepthOrArraySize: 1,
+            MipLevels: 1,
+            Format: DXGI_FORMAT_D32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Layout: D3D12_TEXTURE_LAYOUT_UNKNOWN,
+            Flags: D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
+                | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE,
+        };
+
+        //深度ステンシルバッファ生成
+        let heap_prop: D3D12_HEAP_PROPERTIES = D3D12_HEAP_PROPERTIES {
+            Type: D3D12_HEAP_TYPE_DEFAULT,
+            ..Default::default()
+        };
+        match unsafe {
+            self.device.CreateCommittedResource(
+                &heap_prop,
+                D3D12_HEAP_FLAG_NONE,
+                &desc,
+                D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                Some(&dsv_clear_value),
+                &mut self.depth_stencil_buffer,
+            )
+        } {
+            Ok(_) => (),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create depth stencil buffer: {:?}",
+                    err
+                )))
+            }
+        }
+
+        Ok(())
     }
 }
 
