@@ -50,6 +50,8 @@ pub struct Dx12Resources {
     depth_stencil_buffer: Option<ID3D12Resource>,
     //コマンドアロケータ
     command_allocator: ID3D12CommandAllocator,
+    //コマンドリスト
+    command_list: ID3D12CommandList,
 
     //現在のバッグバッファインデックス
     current_back_buffer_index: u32,
@@ -516,7 +518,30 @@ impl Dx12Resources {
             Ok(cmda) => self.command_allocator = cmda,
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
-                    "Failed to create depth stencil buffer: {:?}",
+                    "Failed to create command allocator: {:?}",
+                    err
+                )))
+            }
+        }
+
+        Ok(())
+    }
+
+    //コマンドリストの生成
+    fn create_command_list(&self) -> std::result::Result<(), Dx12Error> {
+        //コマンドリスト生成
+        match unsafe {
+            self.device.CreateCommandList(
+                0,
+                D3D12_COMMAND_LIST_TYPE_DIRECT,
+                &self.command_allocator,
+                None,
+            )
+        } {
+            Ok(cmdl) => self.command_list = cmdl,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create command list: {:?}",
                     err
                 )))
             }
