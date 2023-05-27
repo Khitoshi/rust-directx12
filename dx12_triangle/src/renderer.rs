@@ -51,8 +51,14 @@ pub struct Dx12Resources {
     //コマンドアロケータ
     command_allocator: ID3D12CommandAllocator,
     //コマンドリスト
-    command_list: ID3D12CommandList,
+    command_list: ID3D12GraphicsCommandList,
 
+    //GPUと同期するオブジェクト
+    fence: ID3D12Fence,
+    //フェンスの値
+    fence_value: u32,
+    //
+    fence_event: HANDLE,
     //現在のバッグバッファインデックス
     current_back_buffer_index: u32,
 }
@@ -542,6 +548,47 @@ impl Dx12Resources {
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create command list: {:?}",
+                    err
+                )))
+            }
+        }
+
+        //コマンドリストは開かれている状態で生成されるので，一度閉じる
+        match unsafe { self.command_list.Close() } {
+            Ok(()) => (),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to close command list: {:?}",
+                    err
+                )))
+            }
+        }
+
+        Ok(())
+    }
+
+    //GPUと同期オブジェクト生成
+    fn create_synchronization_with_gpu_object(&self) -> std::result::Result<(), Dx12Error> {
+        //GPUと同期オブジェクト(fence)生成
+        match unsafe { self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
+            Ok(fence) => self.fence = fence,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create fence: {:?}",
+                    err
+                )))
+            }
+        }
+
+        //フェンスの値 設定
+        self.fence_value = 1;
+
+        //フェンス イベントの設置
+        match unsafe { CreateEventA(None, false, false, None) } {
+            Ok(event) => self.fence_event = event,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create fence event: {:?}",
                     err
                 )))
             }
