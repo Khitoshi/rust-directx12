@@ -48,6 +48,9 @@ pub struct Dx12Resources {
     render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize],
     //深度ステンシルバッファ
     depth_stencil_buffer: Option<ID3D12Resource>,
+    //コマンドアロケータ
+    command_allocator: ID3D12CommandAllocator,
+
     //現在のバッグバッファインデックス
     current_back_buffer_index: u32,
 }
@@ -492,6 +495,25 @@ impl Dx12Resources {
             )
         } {
             Ok(_) => (),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create depth stencil buffer: {:?}",
+                    err
+                )))
+            }
+        }
+
+        Ok(())
+    }
+
+    //コマンドアロケータの生成
+    fn create_command_allocator(&self) -> std::result::Result<(), Dx12Error> {
+        //コマンドアロケータの生成
+        match unsafe {
+            self.device
+                .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)
+        } {
+            Ok(cmda) => self.command_allocator = cmda,
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create depth stencil buffer: {:?}",
