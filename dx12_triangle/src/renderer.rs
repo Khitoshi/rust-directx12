@@ -71,7 +71,7 @@ impl Dx12Resources {
 
 //
 impl Dx12Resources {
-    fn create_factory() -> std::result::Result<IDXGIFactory4, Dx12Error> {
+    fn create_factory(&self) -> std::result::Result<IDXGIFactory4, Dx12Error> {
         //デバッグ時のみ入る
         if cfg!(debug_assertions) {
             unsafe {
@@ -91,10 +91,7 @@ impl Dx12Resources {
         };
 
         //dxgi factory生成
-        let dxgi_factory_result = unsafe { CreateDXGIFactory2(dxgi_factory_flags) };
-
-        //factory 生成チェック
-        match dxgi_factory_result {
+        match unsafe { CreateDXGIFactory2(dxgi_factory_flags) } {
             Ok(dxgi_factory) => {
                 // 成功した場合の処理
                 println!("Factory creation succeeded");
@@ -110,7 +107,7 @@ impl Dx12Resources {
     }
 
     //デバイスを生成
-    fn create_device(factory: IDXGIFactory4) -> std::result::Result<ID3D12Device, Dx12Error> {
+    fn create_device(&self) -> std::result::Result<ID3D12Device, Dx12Error> {
         //主要なGPUベンダー定義
         enum GpuVender {
             GpuVenderNvidia, //NVIDIA
@@ -121,32 +118,29 @@ impl Dx12Resources {
         }
 
         //大手venderのGPUを持つアダプタ
-        let mut adapter_vender: [Option<IDXGIAdapter>; GpuVender::NumGpuVender as usize];
+        let mut adapter_vender: [Option<IDXGIAdapter1>; GpuVender::NumGpuVender as usize];
         //最大のビデオサイズを持つアダプタ 主要なGPUがない場合に使用される
-        let mut adapter_maximum_video_memory: Option<IDXGIAdapter>;
+        let mut adapter_maximum_video_memory: Option<IDXGIAdapter1> = None;
         //ビデオメモリー比較用
         let mut video_memory_size = 0;
+
         //ここはグラフィックスカードが複数枚刺さっている場合にどれが一番メモリ容量が多いかを調べ一番多いものを使用する為のloop
         let mut i: u32 = 0;
         loop {
-            let adapter_result = unsafe { factory.EnumAdapters(i) };
-
             //アダプター取得
-            let adapter = match adapter_result {
-                Ok(adapter) => adapter,
+            let adapter: IDXGIAdapter1 = match unsafe { self.dxgi_factory.EnumAdapters1(i) } {
+                Ok(ap) => ap,
                 Err(err) => {
-                    println!("EnumAdapters adapter error:{}", err);
                     break;
                 }
             };
 
             //グラフィックス能力のあるdescを取得
             let mut desc: DXGI_ADAPTER_DESC = DXGI_ADAPTER_DESC::default();
-            let desc_result = unsafe { adapter.GetDesc(&mut desc) };
             //desc取得チェック
-            if let Err(err) = desc_result {
-                println!("GetDesc error: {}", err);
-                break;
+            if let Err(err) = unsafe { adapter.GetDesc(&mut desc) } {
+                return Err(Dx12Error::new(&format!("Failed get device {:?}", err)));
+                //break;
             }
 
             //ビデオメモリの比較を行う
@@ -187,32 +181,32 @@ impl Dx12Resources {
 
         //使用するアダプタを決める(現在はintelが最優先)
         // NVIDIA >> AMD >> intel >> other
-        let mut use_adapter: Option<IDXGIAdapter> = None;
-        if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
-            //NVIDIA
-            use_adapter = Some(
-                adapter_vender[GpuVender::GpuVenderNvidia as usize]
-                    .clone()
-                    .unwrap(),
-            );
-        } else if adapter_vender[GpuVender::GpuVenderAmd as usize].is_some() {
-            //AMD
-            use_adapter = Some(
-                adapter_vender[GpuVender::GpuVenderAmd as usize]
-                    .clone()
-                    .unwrap(),
-            );
-        } else if adapter_vender[GpuVender::GpuVenderIntel as usize].is_some() {
-            //INTEL
-            use_adapter = Some(
-                adapter_vender[GpuVender::GpuVenderIntel as usize]
-                    .clone()
-                    .unwrap(),
-            );
-        } else {
-            //主要ベンダ以外
-            use_adapter = Some(adapter_maximum_video_memory.clone().unwrap());
-        }
+        let mut use_adapter: Option<IDXGIAdapter1> =
+            if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
+                //NVIDIA
+                Some(
+                    adapter_vender[GpuVender::GpuVenderNvidia as usize]
+                        .clone()
+                        .unwrap(),
+                )
+            } else if adapter_vender[GpuVender::GpuVenderAmd as usize].is_some() {
+                //AMD
+                Some(
+                    adapter_vender[GpuVender::GpuVenderAmd as usize]
+                        .clone()
+                        .unwrap(),
+                )
+            } else if adapter_vender[GpuVender::GpuVenderIntel as usize].is_some() {
+                //INTEL
+                Some(
+                    adapter_vender[GpuVender::GpuVenderIntel as usize]
+                        .clone()
+                        .unwrap(),
+                )
+            } else {
+                //主要ベンダ以外
+                Some(adapter_maximum_video_memory.clone().unwrap())
+            };
 
         //pcによってレベルが異なるため 使用している可能性のあるFEATURE_LEVELを列挙
         const feature_levels: [D3D_FEATURE_LEVEL; 4] = [
@@ -240,7 +234,8 @@ impl Dx12Resources {
             }
         }
 
-        Err(Dx12Error::new("デバイスの生成に失敗"))
+        //デバイスの生成に失敗
+        Err(Dx12Error::new("Failed to generate device"))
     }
 
     //create_commandqueue 生成
@@ -252,7 +247,7 @@ impl Dx12Resources {
             ..Default::default()
         };
 
-        //生成&生成チェック
+        //コマンドキューの生成
         match unsafe {
             self.device
                 .CreateCommandQueue::<ID3D12CommandQueue>(&command_queue_desc)
@@ -273,7 +268,7 @@ impl Dx12Resources {
         frame_buffer_hegith: u32,
     ) -> std::result::Result<IDXGISwapChain4, Dx12Error> {
         //スワップチェインの設定
-        let swap_chain_desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
+        let desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
             BufferCount: FRAME_BUFFER_COUNT,
             Width: frame_buffer_width,
             Height: frame_buffer_hegith,
@@ -289,38 +284,29 @@ impl Dx12Resources {
 
         //スワップチェイン1を作成
         //TODO:swapchain1を定義せずに直接swapchain4をcastする
-        let mut swap_chain1: Option<IDXGISwapChain1> = None;
-        match unsafe {
-            self.dxgi_factory.CreateSwapChainForHwnd(
-                &self.command_queue,
-                *hwnd,
-                &swap_chain_desc,
-                None,
-                None,
-            )
+        let mut swap_chain1: Option<IDXGISwapChain1> = match unsafe {
+            self.dxgi_factory
+                .CreateSwapChainForHwnd(&self.command_queue, *hwnd, &desc, None, None)
         } {
-            Ok(sc) => {
-                swap_chain1 = Some(sc);
-            }
+            Ok(sc) => Some(sc),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create swap chain: {:?}",
                     err
                 )));
             }
-        }
+        };
 
         //swapchain1 を swapchain4に変換する
-        let swap_chain4: Option<IDXGISwapChain4> =
-            match swap_chain1.unwrap().cast::<IDXGISwapChain4>() {
-                Ok(sc) => Some(sc),
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed to create swap chian:{:?}",
-                        err
-                    )))
-                }
-            };
+        let swap_chain4: Option<IDXGISwapChain4> = match swap_chain1.unwrap().cast() {
+            Ok(sc) => Some(sc),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create swap chian:{:?}",
+                    err
+                )))
+            }
+        };
 
         //バッグバッファ取得
         self.current_back_buffer_index =
@@ -353,7 +339,9 @@ impl Dx12Resources {
     }
 
     //rtv ディスクリプタヒープ生成
-    fn create_rtv_descriptor_heap_for_frame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_rtv_descriptor_heap_for_frame_buffer(
+        &self,
+    ) -> std::result::Result<(ID3D12DescriptorHeap, u32), Dx12Error> {
         //レンダリングターゲットビューのディスクリプタヒープ用のディスクリプタヒープデスクを作成
         let desc: D3D12_DESCRIPTOR_HEAP_DESC = D3D12_DESCRIPTOR_HEAP_DESC {
             NumDescriptors: FRAME_BUFFER_COUNT,
@@ -362,30 +350,31 @@ impl Dx12Resources {
             ..Default::default()
         };
 
-        match unsafe { self.device.CreateDescriptorHeap(&desc) } {
-            Ok(rtv) => {
-                self.rtv_heap = Some(rtv);
-            }
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create rtv descriptor heap: {:?}",
-                    err
-                )))
-            }
-        }
+        let rtv_heap: Option<ID3D12DescriptorHeap> =
+            match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+                Ok(rtv) => Some(rtv),
+
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create rtv descriptor heap: {:?}",
+                        err
+                    )))
+                }
+            };
 
         //ディスクリプタのサイズを取得
-        //TODO:単一責任理論に反している気がするので要検討
-        self.rtv_descriptor_size = unsafe {
+        let rtv_descriptor_size: u32 = unsafe {
             self.device
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
         };
 
-        Ok(())
+        Ok((rtv_heap.unwrap(), rtv_descriptor_size))
     }
 
     //dsv ディスクリプタヒープ生成
-    fn create_dsv_descriptor_heap_for_frame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_dsv_descriptor_heap_for_frame_buffer(
+        &self,
+    ) -> std::result::Result<(ID3D12DescriptorHeap, u32), Dx12Error> {
         //深度ステンシルビューのディスクリプタヒープ用のディスクリプタヒープデスクを作成
         let desc: D3D12_DESCRIPTOR_HEAP_DESC = D3D12_DESCRIPTOR_HEAP_DESC {
             NumDescriptors: 1,
@@ -395,35 +384,36 @@ impl Dx12Resources {
         };
 
         //深度ステンシルビューのディスクリプタヒープ作成
-        match unsafe { self.device.CreateDescriptorHeap(&desc) } {
-            Ok(dsv) => {
-                self.dsv_heap = Some(dsv);
-            }
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create dsv descriptor heap: {:?}",
-                    err
-                )))
-            }
-        }
+        let dsv_heap: Option<ID3D12DescriptorHeap> =
+            match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+                Ok(dsv) => Some(dsv),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create dsv descriptor heap: {:?}",
+                        err
+                    )))
+                }
+            };
 
         //ディスクリプタのサイズを取得。
-        //TODO:単一責任理論に反している可能性があるので要検討
-        self.dsv_descriptor_size = unsafe {
+        let dsv_descriptor_size: u32 = unsafe {
             self.device
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)
         };
 
-        Ok(())
+        Ok((dsv_heap.unwrap(), dsv_descriptor_size))
     }
 
     //フレームバッファ用のレンダーターゲットバッファの生成
-    fn create_rtv_for_fame_buffer(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_rtv_for_fame_buffer(
+        &self,
+    ) -> std::result::Result<[ID3D12Resource; FRAME_BUFFER_COUNT as usize], Dx12Error> {
         //ヒープの先頭を表すCPUディスクリプタハンドルを取得
         let mut rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
             unsafe { self.rtv_heap.unwrap().GetCPUDescriptorHandleForHeapStart() };
 
         //フロントバッファをバックバッファ用のRTVを作成
+        let mut render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize];
         for i in 0..FRAME_BUFFER_COUNT as u32 {
             //フレームバッファ用レンダーターゲット取得
             let render_target: ID3D12Resource = match unsafe { self.swap_chain.GetBuffer(i) } {
@@ -443,13 +433,13 @@ impl Dx12Resources {
             };
 
             //生成したレンダーターゲットを登録
-            self.render_targets[i as usize] = render_target;
+            render_targets[i as usize] = render_target;
 
             //ポインタを渡したのでずらす
             rtv_handle.ptr += self.rtv_descriptor_size as usize;
         }
 
-        Ok(())
+        Ok(render_targets)
     }
 
     //フレームバッファ用の深度ステンシルバッファの生成
@@ -457,7 +447,7 @@ impl Dx12Resources {
         &self,
         frame_buffer_width: u64,
         frame_buffer_height: u32,
-    ) -> std::result::Result<(), Dx12Error> {
+    ) -> std::result::Result<ID3D12Resource, Dx12Error> {
         //画面クリア値設定
         let dsv_clear_value: D3D12_CLEAR_VALUE = D3D12_CLEAR_VALUE {
             Format: DXGI_FORMAT_D32_FLOAT,
@@ -492,6 +482,7 @@ impl Dx12Resources {
             Type: D3D12_HEAP_TYPE_DEFAULT,
             ..Default::default()
         };
+        let mut depth_stencil_buffer: Option<ID3D12Resource> = None;
         match unsafe {
             self.device.CreateCommittedResource(
                 &heap_prop,
@@ -499,7 +490,7 @@ impl Dx12Resources {
                 &desc,
                 D3D12_RESOURCE_STATE_DEPTH_WRITE,
                 Some(&dsv_clear_value),
-                &mut self.depth_stencil_buffer,
+                &mut depth_stencil_buffer,
             )
         } {
             Ok(_) => (),
@@ -511,32 +502,32 @@ impl Dx12Resources {
             }
         }
 
-        Ok(())
+        Ok(depth_stencil_buffer.unwrap())
     }
 
     //コマンドアロケータの生成
-    fn create_command_allocator(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_command_allocator(&self) -> std::result::Result<ID3D12CommandAllocator, Dx12Error> {
         //コマンドアロケータの生成
-        match unsafe {
+        let command_allocator: Option<ID3D12CommandAllocator> = match unsafe {
             self.device
                 .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)
         } {
-            Ok(cmda) => self.command_allocator = cmda,
+            Ok(cmda) => Some(cmda),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create command allocator: {:?}",
                     err
                 )))
             }
-        }
+        };
 
-        Ok(())
+        Ok(command_allocator.unwrap())
     }
 
     //コマンドリストの生成
-    fn create_command_list(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_command_list(&self) -> std::result::Result<ID3D12GraphicsCommandList, Dx12Error> {
         //コマンドリスト生成
-        match unsafe {
+        let command_list: Option<ID3D12GraphicsCommandList> = match unsafe {
             self.device.CreateCommandList(
                 0,
                 D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -544,17 +535,17 @@ impl Dx12Resources {
                 None,
             )
         } {
-            Ok(cmdl) => self.command_list = cmdl,
+            Ok(cmdl) => Some(cmdl),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create command list: {:?}",
                     err
                 )))
             }
-        }
+        };
 
         //コマンドリストは開かれている状態で生成されるので，一度閉じる
-        match unsafe { self.command_list.Close() } {
+        match unsafe { command_list.unwrap().Close() } {
             Ok(()) => (),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
@@ -564,37 +555,40 @@ impl Dx12Resources {
             }
         }
 
-        Ok(())
+        Ok(command_list.unwrap())
     }
 
     //GPUと同期オブジェクト生成
-    fn create_synchronization_with_gpu_object(&self) -> std::result::Result<(), Dx12Error> {
+    fn create_synchronization_with_gpu_object(
+        &self,
+    ) -> std::result::Result<(ID3D12Fence, i32, HANDLE), Dx12Error> {
         //GPUと同期オブジェクト(fence)生成
-        match unsafe { self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
-            Ok(fence) => self.fence = fence,
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create fence: {:?}",
-                    err
-                )))
-            }
-        }
+        let fence: Option<ID3D12Fence> =
+            match unsafe { self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
+                Ok(fence) => Some(fence),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create fence: {:?}",
+                        err
+                    )))
+                }
+            };
 
         //フェンスの値 設定
-        self.fence_value = 1;
+        let fence_value: i32 = 1;
 
         //フェンス イベントの設置
-        match unsafe { CreateEventA(None, false, false, None) } {
-            Ok(event) => self.fence_event = event,
+        let handle: Option<HANDLE> = match unsafe { CreateEventA(None, false, false, None) } {
+            Ok(event) => Some(event),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
                     "Failed to create fence event: {:?}",
                     err
                 )))
             }
-        }
+        };
 
-        Ok(())
+        Ok((fence.unwrap(), fence_value, handle.unwrap()))
     }
 }
 
