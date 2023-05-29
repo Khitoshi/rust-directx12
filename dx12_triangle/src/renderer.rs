@@ -17,46 +17,74 @@ const FRAME_BUFFER_COUNT: u32 = 2;
 
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
-    dxgi_factory: IDXGIFactory4,
+    dxgi_factory: Option<IDXGIFactory4>,
     //デバイス
-    device: ID3D12Device,
+    device: Option<ID3D12Device>,
 
     //スワップチェイン
-    swap_chain: IDXGISwapChain4,
+    swap_chain: Option<IDXGISwapChain4>,
     //現在のバッグバッファインデックス
     current_back_buffer_index: u32,
 
     //レンダリングターゲットビューのディスクリプタヒープ
-    rtv_heap: ID3D12DescriptorHeap,
+    rtv_heap: Option<ID3D12DescriptorHeap>,
     //レンダーターゲットビューのサイズ
     rtv_descriptor_size: u32,
     //フレームバッファ用のレンダリングターゲット
-    render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize],
+    render_targets: Option<[ID3D12Resource; FRAME_BUFFER_COUNT as usize]>,
     //レンダーターゲットハンドル
     //rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 
     //深度ステンシルビューのディスクリプタヒープ
-    dsv_heap: ID3D12DescriptorHeap,
+    dsv_heap: Option<ID3D12DescriptorHeap>,
     //深度ステンシルビューのサイズ
     dsv_descriptor_size: u32,
     //深度ステンシルバッファ
-    depth_stencil_buffer: ID3D12Resource,
+    depth_stencil_buffer: Option<ID3D12Resource>,
     //深度ステンシルハンドル
     //dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
 
     //コマンドキュー
-    command_queue: ID3D12CommandQueue,
+    command_queue: Option<ID3D12CommandQueue>,
     //コマンドアロケータ
-    command_allocator: ID3D12CommandAllocator,
+    command_allocator: Option<ID3D12CommandAllocator>,
     //コマンドリスト
-    command_list: ID3D12GraphicsCommandList,
+    command_list: Option<ID3D12GraphicsCommandList>,
 
     //GPUと同期するオブジェクト
-    fence: ID3D12Fence,
+    fence: Option<ID3D12Fence>,
     //フェンスの値
     fence_value: i32,
     //
-    fence_event: HANDLE,
+    fence_event: Option<HANDLE>,
+}
+
+impl Default for Dx12Resources {
+    fn default() -> Self {
+        Self {
+            dxgi_factory: None,
+            device: None,
+
+            swap_chain: None,
+            current_back_buffer_index: 0,
+
+            rtv_heap: None,
+            rtv_descriptor_size: 0,
+            render_targets: None,
+
+            dsv_heap: None,
+            dsv_descriptor_size: 0,
+            depth_stencil_buffer: None,
+
+            command_queue: None,
+            command_allocator: None,
+            command_list: None,
+
+            fence: None,
+            fence_value: 0,
+            fence_event: None,
+        }
+    }
 }
 
 impl Dx12Resources {
@@ -68,56 +96,59 @@ impl Dx12Resources {
         frame_buffer_width: u64,
         frame_buffer_height: u32,
     ) -> std::result::Result<Dx12Resources, Box<dyn std::error::Error>> {
-        let mut dx12_resources: Dx12Resources;
+        let mut dx12_resources: Dx12Resources = Default::default();
 
         //DXGIファクトリ生成
-        dx12_resources.dxgi_factory = dx12_resources.create_factory()?;
+        dx12_resources.dxgi_factory = Some(dx12_resources.create_factory()?);
 
         //デバイスを生成
-        dx12_resources.device = dx12_resources.create_device()?;
+        dx12_resources.device = Some(dx12_resources.create_device()?);
 
         //コマンドキュー生成
-        dx12_resources.command_queue = dx12_resources.create_commandqueue()?;
+        dx12_resources.command_queue = Some(dx12_resources.create_commandqueue()?);
 
         //スワップチェイン作成
-        dx12_resources.swap_chain = dx12_resources.create_swapchain(
+        let (swap_chain, current_back_buffer_index) = dx12_resources.create_swapchain(
             &hwnd,
             frame_buffer_width as u32,
             frame_buffer_height,
         )?;
+        dx12_resources.swap_chain = Some(swap_chain);
+        dx12_resources.current_back_buffer_index = current_back_buffer_index;
 
         //ウィンドウをフルスクリーンに関連付ける
         dx12_resources.associate_the_window_with_full_screen(&hwnd)?;
 
         //rtv ディスクリプタヒープ生成 & サイズ取得
         let (rtvdh, rtvds) = dx12_resources.create_rtv_descriptor_heap_for_frame_buffer()?;
-        dx12_resources.rtv_heap = rtvdh;
+        dx12_resources.rtv_heap = Some(rtvdh);
         dx12_resources.rtv_descriptor_size = rtvds;
 
         //dsv ディスクリプタヒープ生成 & サイズ取得
         let (dsvdh, dsvs) = dx12_resources.create_dsv_descriptor_heap_for_frame_buffer()?;
-        dx12_resources.dsv_heap = dsvdh;
+        dx12_resources.dsv_heap = Some(dsvdh);
         dx12_resources.dsv_descriptor_size = dsvs;
 
         //フレームバッファ用のレンダーターゲットバッファの生成
-        dx12_resources.render_targets = dx12_resources.create_rtv_for_fame_buffer()?;
+        dx12_resources.render_targets = Some(dx12_resources.create_rtv_for_fame_buffer()?);
 
         //フレームバッファ用の深度ステンシルバッファの生成
-        dx12_resources.depth_stencil_buffer =
-            dx12_resources.create_dsv_for_fame_buffer(frame_buffer_width, frame_buffer_height)?;
+        dx12_resources.depth_stencil_buffer = Some(
+            dx12_resources.create_dsv_for_fame_buffer(frame_buffer_width, frame_buffer_height)?,
+        );
 
         //コマンドアロケータの生成
-        dx12_resources.command_allocator = dx12_resources.create_command_allocator()?;
+        dx12_resources.command_allocator = Some(dx12_resources.create_command_allocator()?);
 
         //コマンドリストの生成
-        dx12_resources.command_list = dx12_resources.create_command_list()?;
+        dx12_resources.command_list = Some(dx12_resources.create_command_list()?);
 
         //GPUと同期オブジェクト生成
         let (fence, fence_value, handle) =
             dx12_resources.create_synchronization_with_gpu_object()?;
-        dx12_resources.fence = fence;
+        dx12_resources.fence = Some(fence);
         dx12_resources.fence_value = fence_value;
-        dx12_resources.fence_event = handle;
+        dx12_resources.fence_event = Some(handle);
 
         Ok(dx12_resources)
     }
@@ -173,7 +204,7 @@ impl Dx12Resources {
         }
 
         //大手venderのGPUを持つアダプタ
-        let mut adapter_vender: [Option<IDXGIAdapter1>; GpuVender::NumGpuVender as usize];
+        let mut adapter_vender: [Option<IDXGIAdapter1>; GpuVender::NumGpuVender as usize] = todo!();
         //最大のビデオサイズを持つアダプタ 主要なGPUがない場合に使用される
         let mut adapter_maximum_video_memory: Option<IDXGIAdapter1> = None;
         //ビデオメモリー比較用
@@ -183,12 +214,13 @@ impl Dx12Resources {
         let mut i: u32 = 0;
         loop {
             //アダプター取得
-            let adapter: IDXGIAdapter1 = match unsafe { self.dxgi_factory.EnumAdapters1(i) } {
-                Ok(ap) => ap,
-                Err(err) => {
-                    break;
-                }
-            };
+            let adapter: IDXGIAdapter1 =
+                match unsafe { self.dxgi_factory.as_ref().unwrap().EnumAdapters1(i) } {
+                    Ok(ap) => ap,
+                    Err(_) => {
+                        break;
+                    }
+                };
 
             //グラフィックス能力のあるdescを取得
             let mut desc: DXGI_ADAPTER_DESC = DXGI_ADAPTER_DESC::default();
@@ -202,7 +234,7 @@ impl Dx12Resources {
             if desc.DedicatedVideoMemory > video_memory_size {
                 //ここで取得したアダプタはAMDやINTEL等のGPUがない場合に使用するアダプタ
                 //現在取得しているdescのビデオメモリの方が多いので更新する
-                adapter_maximum_video_memory = Some(adapter.clone());
+                adapter_maximum_video_memory = Some(adapter);
                 video_memory_size = desc.DedicatedVideoMemory;
             }
 
@@ -236,7 +268,7 @@ impl Dx12Resources {
 
         //使用するアダプタを決める(現在はintelが最優先)
         // NVIDIA >> AMD >> intel >> other
-        let mut use_adapter: Option<IDXGIAdapter1> =
+        let use_adapter: Option<IDXGIAdapter1> =
             if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
                 //NVIDIA
                 Some(
@@ -281,7 +313,7 @@ impl Dx12Resources {
                         //生成に成功したのでdeviceを返す
                         return Ok(device.unwrap());
                     }
-                    Err(err) => {
+                    Err(_) => {
                         //エラーの場合、次のfeature_levelで試みる
                         continue;
                     }
@@ -296,7 +328,7 @@ impl Dx12Resources {
     //コマンドキュー生成
     fn create_commandqueue(&self) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
         // コマンドキューの設定
-        const command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
+        let command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
             Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
             Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
             ..Default::default()
@@ -305,7 +337,9 @@ impl Dx12Resources {
         //コマンドキューの生成
         match unsafe {
             self.device
-                .CreateCommandQueue::<ID3D12CommandQueue>(&command_queue_desc)
+                .as_ref()
+                .unwrap()
+                .CreateCommandQueue(&command_queue_desc)
         } {
             Ok(cmd_queue) => Ok(cmd_queue),
             Err(err) => Err(Dx12Error::new(&format!(
@@ -321,7 +355,7 @@ impl Dx12Resources {
         hwnd: &HWND,
         frame_buffer_width: u32,
         frame_buffer_hegith: u32,
-    ) -> std::result::Result<IDXGISwapChain4, Dx12Error> {
+    ) -> std::result::Result<(IDXGISwapChain4, u32), Dx12Error> {
         //スワップチェインの設定
         let desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
             BufferCount: FRAME_BUFFER_COUNT,
@@ -340,8 +374,13 @@ impl Dx12Resources {
         //スワップチェイン1を作成
         //TODO:swapchain1を定義せずに直接swapchain4をcastする
         let mut swap_chain1: Option<IDXGISwapChain1> = match unsafe {
-            self.dxgi_factory
-                .CreateSwapChainForHwnd(&self.command_queue, *hwnd, &desc, None, None)
+            self.dxgi_factory.as_ref().unwrap().CreateSwapChainForHwnd(
+                &self.command_queue.clone().unwrap(),
+                *hwnd,
+                &desc,
+                None,
+                None,
+            )
         } {
             Ok(sc) => Some(sc),
             Err(err) => {
@@ -364,10 +403,10 @@ impl Dx12Resources {
         };
 
         //バッグバッファ取得
-        self.current_back_buffer_index =
-            unsafe { swap_chain4.unwrap().GetCurrentBackBufferIndex() };
+        let current_back_buffer_index: u32 =
+            unsafe { swap_chain4.as_ref().unwrap().GetCurrentBackBufferIndex() };
 
-        Ok(swap_chain4.unwrap())
+        Ok((swap_chain4.clone().unwrap(), current_back_buffer_index))
     }
 
     //ウィンドウをフルスクリーンに関連付ける
@@ -381,6 +420,8 @@ impl Dx12Resources {
         //ウィンドウの設定をする
         match unsafe {
             self.dxgi_factory
+                .as_ref()
+                .unwrap()
                 .MakeWindowAssociation(*hwnd, DXGI_MWA_NO_ALT_ENTER)
         } {
             Ok(_) => Ok(()),
@@ -406,7 +447,7 @@ impl Dx12Resources {
         };
 
         let rtv_heap: Option<ID3D12DescriptorHeap> =
-            match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+            match unsafe { self.device.unwrap().CreateDescriptorHeap(&desc) } {
                 Ok(rtv) => Some(rtv),
 
                 Err(err) => {
@@ -420,6 +461,7 @@ impl Dx12Resources {
         //ディスクリプタのサイズを取得
         let rtv_descriptor_size: u32 = unsafe {
             self.device
+                .unwrap()
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
         };
 
@@ -440,7 +482,7 @@ impl Dx12Resources {
 
         //深度ステンシルビューのディスクリプタヒープ作成
         let dsv_heap: Option<ID3D12DescriptorHeap> =
-            match unsafe { self.device.CreateDescriptorHeap(&desc) } {
+            match unsafe { self.device.unwrap().CreateDescriptorHeap(&desc) } {
                 Ok(dsv) => Some(dsv),
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
@@ -453,6 +495,7 @@ impl Dx12Resources {
         //ディスクリプタのサイズを取得。
         let dsv_descriptor_size: u32 = unsafe {
             self.device
+                .unwrap()
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)
         };
 
@@ -465,25 +508,27 @@ impl Dx12Resources {
     ) -> std::result::Result<[ID3D12Resource; FRAME_BUFFER_COUNT as usize], Dx12Error> {
         //ヒープの先頭を表すCPUディスクリプタハンドルを取得
         let mut rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
-            unsafe { self.rtv_heap.GetCPUDescriptorHandleForHeapStart() };
+            unsafe { self.rtv_heap.unwrap().GetCPUDescriptorHandleForHeapStart() };
 
         //フロントバッファをバックバッファ用のRTVを作成
         let mut render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize];
         for i in 0..FRAME_BUFFER_COUNT as u32 {
             //フレームバッファ用レンダーターゲット取得
-            let render_target: ID3D12Resource = match unsafe { self.swap_chain.GetBuffer(i) } {
-                Ok(rt) => rt,
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed to create rtv descriptor heap: {:?}",
-                        err
-                    )))
-                }
-            };
+            let render_target: ID3D12Resource =
+                match unsafe { self.swap_chain.unwrap().GetBuffer(i) } {
+                    Ok(rt) => rt,
+                    Err(err) => {
+                        return Err(Dx12Error::new(&format!(
+                            "Failed to create rtv descriptor heap: {:?}",
+                            err
+                        )))
+                    }
+                };
 
             //レンダーターゲットビューの生成
             unsafe {
                 self.device
+                    .unwrap()
                     .CreateRenderTargetView(&render_target, None, rtv_handle)
             };
 
@@ -539,7 +584,7 @@ impl Dx12Resources {
         };
         let mut depth_stencil_buffer: Option<ID3D12Resource> = None;
         match unsafe {
-            self.device.CreateCommittedResource(
+            self.device.unwrap().CreateCommittedResource(
                 &heap_prop,
                 D3D12_HEAP_FLAG_NONE,
                 &desc,
@@ -565,6 +610,7 @@ impl Dx12Resources {
         //コマンドアロケータの生成
         let command_allocator: Option<ID3D12CommandAllocator> = match unsafe {
             self.device
+                .unwrap()
                 .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)
         } {
             Ok(cmda) => Some(cmda),
@@ -583,10 +629,10 @@ impl Dx12Resources {
     fn create_command_list(&self) -> std::result::Result<ID3D12GraphicsCommandList, Dx12Error> {
         //コマンドリスト生成
         let command_list: Option<ID3D12GraphicsCommandList> = match unsafe {
-            self.device.CreateCommandList(
+            self.device.unwrap().CreateCommandList(
                 0,
                 D3D12_COMMAND_LIST_TYPE_DIRECT,
-                &self.command_allocator,
+                &self.command_allocator.unwrap(),
                 None,
             )
         } {
@@ -624,7 +670,7 @@ impl Dx12Resources {
     ) -> std::result::Result<(ID3D12Fence, i32, HANDLE), Dx12Error> {
         //GPUと同期オブジェクト(fence)生成
         let fence: Option<ID3D12Fence> =
-            match unsafe { self.device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
+            match unsafe { self.device.unwrap().CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
                 Ok(fence) => Some(fence),
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
