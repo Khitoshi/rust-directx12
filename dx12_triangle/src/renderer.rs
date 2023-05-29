@@ -1,3 +1,7 @@
+#[path = "../src/dx12error.rs"]
+mod dx12error;
+use dx12error::Dx12Error;
+
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
     Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*,
@@ -8,46 +12,40 @@ use windows::{
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-const FRAME_BUFFER_COUNT: u32 = 2;
-//エラー取得用
-pub struct Dx12Error {
-    message: String,
-}
-impl Dx12Error {
-    pub fn new(message: &str) -> Dx12Error {
-        Dx12Error {
-            message: message.to_string(),
-        }
-    }
-    //エラー出力
-    pub fn print_error(&self) {
-        eprintln!("{}", self.message);
-    }
-}
 
-//TODO:Dx12用のrsファイルを作成する
+const FRAME_BUFFER_COUNT: u32 = 2;
 
 pub struct Dx12Resources {
     //ファクトリー デバッグ用
     dxgi_factory: IDXGIFactory4,
     //デバイス
     device: ID3D12Device,
-    //コマンドキュー
-    command_queue: ID3D12CommandQueue,
+
     //スワップチェイン
     swap_chain: IDXGISwapChain4,
+    //現在のバッグバッファインデックス
+    current_back_buffer_index: u32,
+
     //レンダリングターゲットビューのディスクリプタヒープ
-    rtv_heap: Option<ID3D12DescriptorHeap>,
+    rtv_heap: ID3D12DescriptorHeap,
     //レンダーターゲットビューのサイズ
     rtv_descriptor_size: u32,
-    //深度ステンシルビューのディスクリプタヒープ
-    dsv_heap: Option<ID3D12DescriptorHeap>,
-    //深度ステンシルビューのサイズ
-    dsv_descriptor_size: u32,
     //フレームバッファ用のレンダリングターゲット
     render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize],
+    //レンダーターゲットハンドル
+    //rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
+
+    //深度ステンシルビューのディスクリプタヒープ
+    dsv_heap: ID3D12DescriptorHeap,
+    //深度ステンシルビューのサイズ
+    dsv_descriptor_size: u32,
     //深度ステンシルバッファ
-    depth_stencil_buffer: Option<ID3D12Resource>,
+    depth_stencil_buffer: ID3D12Resource,
+    //深度ステンシルハンドル
+    //dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
+
+    //コマンドキュー
+    command_queue: ID3D12CommandQueue,
     //コマンドアロケータ
     command_allocator: ID3D12CommandAllocator,
     //コマンドリスト
@@ -56,21 +54,78 @@ pub struct Dx12Resources {
     //GPUと同期するオブジェクト
     fence: ID3D12Fence,
     //フェンスの値
-    fence_value: u32,
+    fence_value: i32,
     //
     fence_event: HANDLE,
-    //現在のバッグバッファインデックス
-    current_back_buffer_index: u32,
 }
 
 impl Dx12Resources {
     //other method
 
-    fn new() {}
+    //初期化関数
+    pub fn new(
+        hwnd: HWND,
+        frame_buffer_width: u64,
+        frame_buffer_height: u32,
+    ) -> std::result::Result<Dx12Resources, Box<dyn std::error::Error>> {
+        let mut dx12_resources: Dx12Resources;
+
+        //DXGIファクトリ生成
+        dx12_resources.dxgi_factory = dx12_resources.create_factory()?;
+
+        //デバイスを生成
+        dx12_resources.device = dx12_resources.create_device()?;
+
+        //コマンドキュー生成
+        dx12_resources.command_queue = dx12_resources.create_commandqueue()?;
+
+        //スワップチェイン作成
+        dx12_resources.swap_chain = dx12_resources.create_swapchain(
+            &hwnd,
+            frame_buffer_width as u32,
+            frame_buffer_height,
+        )?;
+
+        //ウィンドウをフルスクリーンに関連付ける
+        dx12_resources.associate_the_window_with_full_screen(&hwnd)?;
+
+        //rtv ディスクリプタヒープ生成 & サイズ取得
+        let (rtvdh, rtvds) = dx12_resources.create_rtv_descriptor_heap_for_frame_buffer()?;
+        dx12_resources.rtv_heap = rtvdh;
+        dx12_resources.rtv_descriptor_size = rtvds;
+
+        //dsv ディスクリプタヒープ生成 & サイズ取得
+        let (dsvdh, dsvs) = dx12_resources.create_dsv_descriptor_heap_for_frame_buffer()?;
+        dx12_resources.dsv_heap = dsvdh;
+        dx12_resources.dsv_descriptor_size = dsvs;
+
+        //フレームバッファ用のレンダーターゲットバッファの生成
+        dx12_resources.render_targets = dx12_resources.create_rtv_for_fame_buffer()?;
+
+        //フレームバッファ用の深度ステンシルバッファの生成
+        dx12_resources.depth_stencil_buffer =
+            dx12_resources.create_dsv_for_fame_buffer(frame_buffer_width, frame_buffer_height)?;
+
+        //コマンドアロケータの生成
+        dx12_resources.command_allocator = dx12_resources.create_command_allocator()?;
+
+        //コマンドリストの生成
+        dx12_resources.command_list = dx12_resources.create_command_list()?;
+
+        //GPUと同期オブジェクト生成
+        let (fence, fence_value, handle) =
+            dx12_resources.create_synchronization_with_gpu_object()?;
+        dx12_resources.fence = fence;
+        dx12_resources.fence_value = fence_value;
+        dx12_resources.fence_event = handle;
+
+        Ok(dx12_resources)
+    }
 }
 
-//
+//生成処理の実装
 impl Dx12Resources {
+    //DXGIファクトリ生成
     fn create_factory(&self) -> std::result::Result<IDXGIFactory4, Dx12Error> {
         //デバッグ時のみ入る
         if cfg!(debug_assertions) {
@@ -106,7 +161,7 @@ impl Dx12Resources {
         }
     }
 
-    //デバイスを生成
+    //デバイス生成
     fn create_device(&self) -> std::result::Result<ID3D12Device, Dx12Error> {
         //主要なGPUベンダー定義
         enum GpuVender {
@@ -238,7 +293,7 @@ impl Dx12Resources {
         Err(Dx12Error::new("Failed to generate device"))
     }
 
-    //create_commandqueue 生成
+    //コマンドキュー生成
     fn create_commandqueue(&self) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
         // コマンドキューの設定
         const command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
@@ -368,7 +423,7 @@ impl Dx12Resources {
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
         };
 
-        Ok((rtv_heap.unwrap(), rtv_descriptor_size))
+        Ok((rtv_heap.unwrap().clone(), rtv_descriptor_size.clone()))
     }
 
     //dsv ディスクリプタヒープ生成
@@ -401,7 +456,7 @@ impl Dx12Resources {
                 .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)
         };
 
-        Ok((dsv_heap.unwrap(), dsv_descriptor_size))
+        Ok((dsv_heap.unwrap().clone(), dsv_descriptor_size.clone()))
     }
 
     //フレームバッファ用のレンダーターゲットバッファの生成
@@ -410,7 +465,7 @@ impl Dx12Resources {
     ) -> std::result::Result<[ID3D12Resource; FRAME_BUFFER_COUNT as usize], Dx12Error> {
         //ヒープの先頭を表すCPUディスクリプタハンドルを取得
         let mut rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
-            unsafe { self.rtv_heap.unwrap().GetCPUDescriptorHandleForHeapStart() };
+            unsafe { self.rtv_heap.GetCPUDescriptorHandleForHeapStart() };
 
         //フロントバッファをバックバッファ用のRTVを作成
         let mut render_targets: [ID3D12Resource; FRAME_BUFFER_COUNT as usize];
@@ -439,7 +494,7 @@ impl Dx12Resources {
             rtv_handle.ptr += self.rtv_descriptor_size as usize;
         }
 
-        Ok(render_targets)
+        Ok(render_targets.clone())
     }
 
     //フレームバッファ用の深度ステンシルバッファの生成
@@ -502,7 +557,7 @@ impl Dx12Resources {
             }
         }
 
-        Ok(depth_stencil_buffer.unwrap())
+        Ok(depth_stencil_buffer.unwrap().clone())
     }
 
     //コマンドアロケータの生成
@@ -521,7 +576,7 @@ impl Dx12Resources {
             }
         };
 
-        Ok(command_allocator.unwrap())
+        Ok(command_allocator.unwrap().clone())
     }
 
     //コマンドリストの生成
@@ -545,17 +600,22 @@ impl Dx12Resources {
         };
 
         //コマンドリストは開かれている状態で生成されるので，一度閉じる
-        match unsafe { command_list.unwrap().Close() } {
-            Ok(()) => (),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to close command list: {:?}",
-                    err
-                )))
+        if let Some(command_list_ref) = command_list.as_ref() {
+            match unsafe { command_list_ref.Close() } {
+                Ok(()) => (),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to close command list: {:?}",
+                        err
+                    )))
+                }
             }
         }
 
-        Ok(command_list.unwrap())
+        match command_list {
+            Some(cmd_list) => Ok(cmd_list),
+            None => Err(Dx12Error::new("Command list was not properly initialized")),
+        }
     }
 
     //GPUと同期オブジェクト生成
@@ -588,19 +648,10 @@ impl Dx12Resources {
             }
         };
 
-        Ok((fence.unwrap(), fence_value, handle.unwrap()))
+        Ok((
+            fence.unwrap().clone(),
+            fence_value.clone(),
+            handle.unwrap().clone(),
+        ))
     }
 }
-
-/*
-//破棄処理
-impl Drop for Dx12Resources {
-    fn drop(&mut self) {
-        unsafe {
-            (*self.dxgi_factory).Release();
-            (*self.device).Release();
-            (*self.swap_chain).Release();
-        }
-    }
-}
-*/

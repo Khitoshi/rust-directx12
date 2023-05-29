@@ -1,22 +1,22 @@
-use winapi::shared::minwindef::{LPARAM, LRESULT, UINT, WPARAM};
-use winapi::shared::windef::{HBRUSH, HWND};
-use winapi::um::libloaderapi::GetModuleHandleW;
-use winapi::um::wingdi::{GetStockObject, BLACK_BRUSH};
-use winapi::um::winuser::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostQuitMessage,
-    RegisterClassW, TranslateMessage, CW_USEDEFAULT, MSG, WM_DESTROY, WNDCLASSW,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
-};
+#[path = "../src/dx12error.rs"]
+mod dx12error;
+use dx12error::Dx12Error;
 
 use std::ffi::OsStr;
-use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
-use std::ptr::null_mut;
 
+use windows::{
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
+    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*,
+    Win32::Graphics::Dxgi::IDXGIFactory6, Win32::Graphics::Dxgi::*,
+    Win32::System::LibraryLoader::*, Win32::System::Threading::*,
+    Win32::UI::WindowsAndMessaging::*,
+};
 //ウィンドウプロシージャ
+
 extern "system" fn window_procedure(
     hwnd: HWND,
-    msg: UINT,
+    msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
@@ -25,7 +25,7 @@ extern "system" fn window_procedure(
             // ウィンドウが破棄された場合アプリケーションを終了
             WM_DESTROY => {
                 PostQuitMessage(0);
-                0
+                LRESULT::default()
             }
             // その他のメッセージはデフォルトの処理。
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -35,85 +35,93 @@ extern "system" fn window_procedure(
 
 pub struct Window {
     hwnd: HWND,
+    app_name_wide: Vec<u16>,
 }
 
 impl Window {
     //自身のCreate関数
-    pub fn new() -> Result<Self, &'static str> {
-        // Create the window and return a new Window struct
-        //ウィンドウクラスを識別名設定
-        let window_class_name = to_wstring("view window");
+    pub fn new(
+        app_name: &str,
+        window_rect_right: i32,
+        window_rect_bottom: i32,
+    ) -> std::result::Result<Window, Dx12Error> {
+        let instance: HMODULE = match unsafe { GetModuleHandleA(None) } {
+            Ok(handle) => handle,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed Get Module handleA: {:?}",
+                    err
+                )))
+            }
+        };
 
-        //ウィンドウの見た目、動作を設定
-        let h_instance = unsafe { GetModuleHandleW(null_mut()) };
-        let hbr_background = unsafe { GetStockObject(BLACK_BRUSH as i32) as HBRUSH };
-        let window_class = WNDCLASSW {
-            style: 0,
+        let app_name_wide: Vec<u16> = OsStr::new(app_name).encode_wide().chain(Some(0)).collect();
+        //ウィンドウクラスのパラメータを設定
+        let wc: WNDCLASSEXW = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: CS_CLASSDC,
             lpfnWndProc: Some(window_procedure),
             cbClsExtra: 0,
             cbWndExtra: 0,
-            hInstance: h_instance,
-            hIcon: null_mut(),
-            hCursor: null_mut(),
-            hbrBackground: hbr_background,
-            lpszMenuName: null_mut(),
-            lpszClassName: window_class_name.as_ptr(),
+            hInstance: instance,
+            lpszClassName: PCWSTR(app_name_wide.as_ptr()),
+            ..Default::default()
         };
-
         //ウィンドウクラス登録
-        let result = unsafe { RegisterClassW(&window_class) };
-        if result == 0 {
-            return Err("Failed to register the window class.");
+        let atom = unsafe { RegisterClassExW(&wc) };
+        debug_assert_ne!(atom, 0);
+
+        //シザリング初期化
+        let mut window_rect = RECT {
+            left: 0,
+            top: 0,
+            right: window_rect_right,
+            bottom: window_rect_bottom,
+        };
+        //シザリング登録
+        match unsafe { AdjustWindowRect(&mut window_rect, WS_OVERLAPPEDWINDOW, false) } {
+            TRUE => (),
+            FALSE => return Err(Dx12Error::new("failed AdjustWindowRect")),
         }
 
         //ウィンドウ作成
         let hwnd = unsafe {
             CreateWindowExW(
-                0,
-                window_class_name.as_ptr(),
-                to_wstring("Hello, world!").as_ptr(),
+                WINDOW_EX_STYLE::default(),
+                PCWSTR(app_name_wide.as_ptr()),
+                PCWSTR(app_name_wide.as_ptr()),
                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                null_mut(),
-                null_mut(),
-                GetModuleHandleW(null_mut()),
-                null_mut(),
+                window_rect.right - window_rect.left,
+                window_rect.bottom - window_rect.top,
+                None,
+                None,
+                instance,
+                None,
             )
         };
-        if hwnd.is_null() {
-            return Err("Failed to create the window.");
-        }
+        //ウィンドウ表示
+        unsafe { ShowWindow(hwnd, SW_SHOW) };
 
-        Ok(Window { hwnd: hwnd })
+        Ok(Window {
+            hwnd: hwnd,
+            app_name_wide: app_name_wide,
+        })
     }
 
     //メッセージループ処理
-    pub fn process_messages(&mut self) -> Result<bool, &'static str> {
-        unsafe {
-            let mut msg: MSG = std::mem::zeroed();
-            match GetMessageW(&mut msg, self.hwnd, 0, 0) {
-                -1 => Err("An error occurred while getting message."),
-                0 => Ok(false),
-                _ => {
+    pub fn process_messages_loop(&mut self) {
+        loop {
+            let mut msg: MSG = MSG::default();
+            if unsafe { PeekMessageA(&mut msg, None, 0, 0, PM_REMOVE) }.into() {
+                unsafe {
                     TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                    Ok(true)
+                    DispatchMessageA(&msg);
                 }
+
+                if msg.message == WM_QUIT {}
             }
         }
     }
-
-    /*
-    pub fn get_hwnd(&self) -> HWND {
-        self.hwnd
-    }
-     */
-}
-
-//文字列をnull終端のUTF-16文字列に変換
-fn to_wstring(string: &str) -> Vec<u16> {
-    OsStr::new(string).encode_wide().chain(once(0)).collect()
 }

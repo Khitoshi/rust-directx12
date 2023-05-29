@@ -1,46 +1,36 @@
 mod renderer;
+use renderer::Dx12Resources;
 mod window;
 
+use window::Window;
+use windows::Win32::Foundation::HWND;
+
 fn main() {
-    let mut win = match window::Window::new() {
-        Ok(win) => win,
+    let mut hwnd: HWND;
+    let app_name = "triangle test";
+    let window_rect_right: u64 = 1080;
+    let window_rect_bottom: u32 = 720;
+
+    let mut window = match Window::new(
+        app_name,
+        window_rect_right as i32,
+        window_rect_bottom as i32,
+    ) {
+        Ok(window) => window,
         Err(err) => {
-            println!("Failed to create a window: {}", err);
             return;
         }
     };
 
+    /*
     // Dx12Resourcesの作成
-    let mut dx12_resources = match Dx12Resources::new() {
-        Ok(resources) => resources,
-        Err(err) => {
-            println!("Failed to initialize DirectX 12 resources: {}", err);
-            return;
-        }
-    };
+    let mut dx12_resources =
+    match Dx12Resources::new(hwnd, window_rect_right, window_rect_bottom) {
+        Ok(resouce) => resouce,
+        Err(err)=>{
+            return ;}
+        };
+        */
 
-    loop {
-        match win.process_messages() {
-            Ok(continue_loop) => {
-                if !continue_loop {
-                    break;
-                }
-
-                // ここでレンダリングやその他のタスクを行う
-                match dx12_resources.render() {
-                    Ok(_) => {}
-                    Err(err) => {
-                        println!("Failed to render: {}", err);
-                        break;
-                    }
-                }
-            }
-            Err(err) => {
-                println!("Failed to process messages: {}", err);
-                break;
-            }
-        }
-
-        // Do other tasks such as rendering here.
-    }
+    window.process_messages_loop();
 }
