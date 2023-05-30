@@ -78,12 +78,13 @@ impl Window {
             right: window_rect_right,
             bottom: window_rect_bottom,
         };
-        //シザリング登録
-        match unsafe { AdjustWindowRect(&mut window_rect, WS_OVERLAPPEDWINDOW, false) } {
-            TRUE => (),
-            FALSE => return Err(Dx12Error::new("failed AdjustWindowRect")),
-        }
 
+        //シザリング登録
+        if unsafe { AdjustWindowRect(&mut window_rect, WS_OVERLAPPEDWINDOW, false) }.as_bool()
+            != true
+        {
+            return Err(Dx12Error::new("Failed to adjust window rect"));
+        }
         //ウィンドウ作成
         let hwnd = unsafe {
             CreateWindowExW(
@@ -123,5 +124,11 @@ impl Window {
                 if msg.message == WM_QUIT {}
             }
         }
+    }
+}
+
+impl Window {
+    pub fn get_hwnd(&self) -> HWND {
+        return self.hwnd;
     }
 }
