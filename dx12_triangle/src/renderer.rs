@@ -215,14 +215,19 @@ impl Dx12Resources {
         //ここはグラフィックスカードが複数枚刺さっている場合にどれが一番メモリ容量が多いかを調べ一番多いものを使用する為のloop
         let mut i: u32 = 0;
         loop {
+            //factoryを安全に取得
+            let factory = match self.dxgi_factory.as_ref() {
+                Some(factory) => factory,
+                None => return Err(Dx12Error::new("The value of factory is None")),
+            };
+
             //アダプター取得
-            let adapter: IDXGIAdapter1 =
-                match unsafe { self.dxgi_factory.as_ref().unwrap().EnumAdapters1(i) } {
-                    Ok(ap) => ap,
-                    Err(_) => {
-                        break;
-                    }
-                };
+            let adapter: IDXGIAdapter1 = match unsafe { factory.EnumAdapters1(i) } {
+                Ok(ap) => ap,
+                Err(_) => {
+                    break;
+                }
+            };
 
             //グラフィックス能力のあるdescを取得
             let mut desc: DXGI_ADAPTER_DESC = DXGI_ADAPTER_DESC::default();
@@ -270,35 +275,24 @@ impl Dx12Resources {
 
         //使用するアダプタを決める(現在はintelが最優先)
         // NVIDIA >> AMD >> intel >> other
-        let use_adapter: Option<IDXGIAdapter1> =
-            if adapter_vender[GpuVender::GpuVenderNvidia as usize].is_some() {
-                //NVIDIA
-                Some(
-                    adapter_vender[GpuVender::GpuVenderNvidia as usize]
-                        .clone()
-                        .unwrap(),
-                )
-            } else if adapter_vender[GpuVender::GpuVenderAmd as usize].is_some() {
-                //AMD
-                Some(
-                    adapter_vender[GpuVender::GpuVenderAmd as usize]
-                        .clone()
-                        .unwrap(),
-                )
-            } else if adapter_vender[GpuVender::GpuVenderIntel as usize].is_some() {
-                //INTEL
-                Some(
-                    adapter_vender[GpuVender::GpuVenderIntel as usize]
-                        .clone()
-                        .unwrap(),
-                )
-            } else {
-                //主要ベンダ以外
-                Some(adapter_maximum_video_memory.clone().unwrap())
-            };
+        let use_adapter: Option<IDXGIAdapter1> = if let Some(adaptor) =
+            adapter_vender[GpuVender::GpuVenderNvidia as usize].clone()
+        {
+            //NVIDIA
+            Some(adaptor)
+        } else if let Some(adaptor) = adapter_vender[GpuVender::GpuVenderAmd as usize].clone() {
+            //AMD
+            Some(adaptor)
+        } else if let Some(adaptor) = adapter_vender[GpuVender::GpuVenderIntel as usize].clone() {
+            //INTEL
+            Some(adaptor)
+        } else {
+            //主要ベンダ以外
+            adapter_maximum_video_memory.clone()
+        };
 
         //pcによってレベルが異なるため 使用している可能性のあるFEATURE_LEVELを列挙
-        const feature_levels: [D3D_FEATURE_LEVEL; 4] = [
+        const FEATURE_LEVELS: [D3D_FEATURE_LEVEL; 4] = [
             D3D_FEATURE_LEVEL_12_1, //Direct3D 12.1の機能
             D3D_FEATURE_LEVEL_12_0, //Direct3D 12.0の機能
             D3D_FEATURE_LEVEL_11_1, //Direct3D 11.1の機能
@@ -307,14 +301,17 @@ impl Dx12Resources {
 
         //device生成処理loop
         //TODO:ネストが深いので改善する
-        for level in feature_levels {
+        for level in FEATURE_LEVELS {
             let mut device: Option<ID3D12Device> = None;
+
             if let Some(ref adapter) = use_adapter {
                 match unsafe { D3D12CreateDevice(adapter, level, &mut device) } {
                     Ok(_) => {
                         //生成に成功したのでdeviceを返す
                         println!("Device creation succeeded");
-                        return Ok(device.unwrap());
+                        if let Some(ref device) = self.device {
+                            return Ok(device.clone());
+                        }
                     }
                     Err(_) => {
                         //エラーの場合、次のfeature_levelで試みる
@@ -325,7 +322,7 @@ impl Dx12Resources {
         }
 
         //デバイスの生成に失敗
-        Err(Dx12Error::new("Failed to generate device"))
+        return Err(Dx12Error::new("Failed to generate device"));
     }
 
     //コマンドキュー生成
@@ -337,22 +334,21 @@ impl Dx12Resources {
             ..Default::default()
         };
 
-        //コマンドキューの生成
-        match unsafe {
-            self.device
-                .as_ref()
-                .unwrap()
-                .CreateCommandQueue(&command_queue_desc)
-        } {
-            Ok(cmd_queue) => {
-                //成功した場合commandqueueを返す
-                println!("CommandQueue creation succeeded");
-                Ok(cmd_queue)
+        if let Some(ref device) = self.device {
+            //コマンドキューの生成
+            match unsafe { device.CreateCommandQueue(&command_queue_desc) } {
+                Ok(cmd_queue) => {
+                    //成功した場合commandqueueを返す
+                    println!("CommandQueue creation succeeded");
+                    Ok(cmd_queue)
+                }
+                Err(err) => Err(Dx12Error::new(&format!(
+                    "Failed to create command queue: {:?}",
+                    err
+                ))),
             }
-            Err(err) => Err(Dx12Error::new(&format!(
-                "Failed to create command queue: {:?}",
-                err
-            ))),
+        } else {
+            return Err(Dx12Error::new(&format!("Failed to create command queue",)));
         }
     }
 
@@ -380,41 +376,44 @@ impl Dx12Resources {
 
         //スワップチェイン1を作成
         //TODO:swapchain1を定義せずに直接swapchain4をcastする
-        let mut swap_chain1: Option<IDXGISwapChain1> = match unsafe {
-            self.dxgi_factory.as_ref().unwrap().CreateSwapChainForHwnd(
-                &self.command_queue.clone().unwrap(),
-                *hwnd,
-                &desc,
-                None,
-                None,
-            )
-        } {
-            Ok(sc) => Some(sc),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create swap chain: {:?}",
-                    err
-                )));
-            }
-        };
+        let mut swap_chain1: Option<IDXGISwapChain1> = None;
+        if let (Some(ref factory), Some(ref cmd_queue)) = (&self.dxgi_factory, &self.command_queue)
+        {
+            match unsafe { factory.CreateSwapChainForHwnd(cmd_queue, *hwnd, &desc, None, None) } {
+                Ok(sc) => swap_chain1 = Some(sc),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create swap chain: {:?}",
+                        err
+                    )));
+                }
+            };
+        } else {
+            return Err(Dx12Error::new("Failed to create swap chain"));
+        }
 
         //swapchain1 を swapchain4に変換する
-        let swap_chain4: Option<IDXGISwapChain4> = match swap_chain1.unwrap().cast() {
-            Ok(sc) => Some(sc),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create swap chian:{:?}",
-                    err
-                )))
-            }
-        };
+        let mut swap_chain4: Option<IDXGISwapChain4> = None;
+        if let Some(ref sc1) = swap_chain1 {
+            match sc1.cast() {
+                Ok(sc) => swap_chain4 = Some(sc),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create swap chian:{:?}",
+                        err
+                    )))
+                }
+            };
+        }
 
-        //バッグバッファ取得
-        let current_back_buffer_index: u32 =
-            unsafe { swap_chain4.as_ref().unwrap().GetCurrentBackBufferIndex() };
-
-        println!("SwapChain4 creation succeeded");
-        Ok((swap_chain4.clone().unwrap(), current_back_buffer_index))
+        //SwapChainの値をチェックして返す
+        if let Some(ref sc4) = swap_chain4 {
+            let current_back_buffer_index: u32 = unsafe { sc4.GetCurrentBackBufferIndex() };
+            println!("SwapChain4 creation succeeded");
+            return Ok((sc4.clone(), current_back_buffer_index));
+        } else {
+            return Err(Dx12Error::new(&format!("Failed to create swap chian")));
+        }
     }
 
     //ウィンドウをフルスクリーンに関連付ける
@@ -426,22 +425,21 @@ impl Dx12Resources {
         //TODO:imguiでウィンドウ <-> フルスクリーンを行き来できるようにする
 
         //ウィンドウの設定をする
-        match unsafe {
-            self.dxgi_factory
-                .as_ref()
-                .unwrap()
-                .MakeWindowAssociation(*hwnd, DXGI_MWA_NO_ALT_ENTER)
-        } {
-            Ok(_) => {
-                println!("bind window succeeded");
-                Ok(())
+        if let Some(ref factory) = self.dxgi_factory {
+            match unsafe { factory.MakeWindowAssociation(*hwnd, DXGI_MWA_NO_ALT_ENTER) } {
+                Ok(_) => {
+                    println!("bind window succeeded");
+                    Ok(())
+                }
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create swap chain: {:?}",
+                        err
+                    )))
+                }
             }
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create swap chain: {:?}",
-                    err
-                )))
-            }
+        } else {
+            return Err(Dx12Error::new(&format!("Failed to create swap chain:")));
         }
     }
 
@@ -457,9 +455,12 @@ impl Dx12Resources {
             ..Default::default()
         };
 
-        let rtv_heap: Option<ID3D12DescriptorHeap> =
-            match unsafe { self.device.as_ref().unwrap().CreateDescriptorHeap(&desc) } {
-                Ok(rtv) => Some(rtv),
+        let mut rtv_heap: Option<ID3D12DescriptorHeap> = None;
+        let mut rtv_descriptor_size: u32 = 0;
+        if let Some(ref device) = self.device {
+            //render target heap作成
+            match unsafe { device.CreateDescriptorHeap(&desc) } {
+                Ok(rtv) => rtv_heap = Some(rtv),
 
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
@@ -469,16 +470,22 @@ impl Dx12Resources {
                 }
             };
 
-        //ディスクリプタのサイズを取得
-        let rtv_descriptor_size: u32 = unsafe {
-            self.device
-                .as_ref()
-                .unwrap()
-                .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
-        };
+            //ディスクリプタのサイズを取得
+            rtv_descriptor_size =
+                unsafe { device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) };
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create rtv descriptor heap:"
+            )));
+        }
 
-        println!("rtv descriptor creation succeeded");
-        Ok((rtv_heap.unwrap().clone(), rtv_descriptor_size.clone()))
+        //値を確認してからreturnする
+        if let Some(ref rh) = rtv_heap {
+            println!("rtv descriptor creation succeeded");
+            Ok((rh.clone(), rtv_descriptor_size.clone()))
+        } else {
+            return Err(Dx12Error::new("Failed to create rtv descriptor heap"));
+        }
     }
 
     //dsv ディスクリプタヒープ生成
@@ -494,9 +501,11 @@ impl Dx12Resources {
         };
 
         //深度ステンシルビューのディスクリプタヒープ作成
-        let dsv_heap: Option<ID3D12DescriptorHeap> =
-            match unsafe { self.device.as_ref().unwrap().CreateDescriptorHeap(&desc) } {
-                Ok(dsv) => Some(dsv),
+        let mut dsv_heap: Option<ID3D12DescriptorHeap> = None;
+        let mut dsv_descriptor_size: u32 = 0;
+        if let Some(ref device) = self.device {
+            match unsafe { device.CreateDescriptorHeap(&desc) } {
+                Ok(dsv) => dsv_heap = Some(dsv),
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
                         "Failed to create dsv descriptor heap: {:?}",
@@ -505,16 +514,22 @@ impl Dx12Resources {
                 }
             };
 
-        //ディスクリプタのサイズを取得。
-        let dsv_descriptor_size: u32 = unsafe {
-            self.device
-                .as_ref()
-                .unwrap()
-                .GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV)
-        };
+            dsv_descriptor_size =
+                unsafe { device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV) };
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create dsv descriptor heap"
+            )));
+        }
 
-        println!("dsv descriptor creation succeeded");
-        Ok((dsv_heap.unwrap().clone(), dsv_descriptor_size.clone()))
+        if let Some(ref dsvh) = dsv_heap {
+            println!("dsv descriptor creation succeeded");
+            return Ok((dsvh.clone(), dsv_descriptor_size.clone()));
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create dsv descriptor heap"
+            )));
+        }
     }
 
     //フレームバッファ用のレンダーターゲットバッファの生成
@@ -542,9 +557,9 @@ impl Dx12Resources {
                         Ok(resource) => resource,
                         Err(err) => {
                             return Err(Dx12Error::new(&format!(
-                            "Failed to get rendertarget of frame buffer  heap at index {}: {:?}",
-                            i, err
-                        )))
+                        "Failed to get rendertarget of frame buffer  heap at index {}: {:?}",
+                        i, err
+                    )))
                         }
                     };
 
@@ -609,70 +624,95 @@ impl Dx12Resources {
             ..Default::default()
         };
         let mut depth_stencil_buffer: Option<ID3D12Resource> = None;
-        match unsafe {
-            self.device.as_ref().unwrap().CreateCommittedResource(
-                &heap_prop,
-                D3D12_HEAP_FLAG_NONE,
-                &desc,
-                D3D12_RESOURCE_STATE_DEPTH_WRITE,
-                Some(&dsv_clear_value),
-                &mut depth_stencil_buffer,
-            )
-        } {
-            Ok(_) => (),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create depth stencil buffer: {:?}",
-                    err
-                )))
+        if let Some(device) = self.device.clone() {
+            match unsafe {
+                device.CreateCommittedResource(
+                    &heap_prop,
+                    D3D12_HEAP_FLAG_NONE,
+                    &desc,
+                    D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                    Some(&dsv_clear_value),
+                    &mut depth_stencil_buffer,
+                )
+            } {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create depth stencil buffer: {:?}",
+                        err
+                    )))
+                }
             }
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create depth stencil buffer"
+            )));
         }
 
-        println!("depth stencil buffer creation succeeded");
-        Ok(depth_stencil_buffer.unwrap().clone())
+        //生成したものをreturnする
+        if let Some(ref dsb) = depth_stencil_buffer {
+            println!("depth stencil buffer creation succeeded");
+            return Ok(dsb.clone());
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create depth stencil buffer"
+            )));
+        }
     }
 
     //コマンドアロケータの生成
     fn create_command_allocator(&self) -> std::result::Result<ID3D12CommandAllocator, Dx12Error> {
         //コマンドアロケータの生成
-        let command_allocator: Option<ID3D12CommandAllocator> = match unsafe {
-            self.device
-                .as_ref()
-                .unwrap()
-                .CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT)
-        } {
-            Ok(cmda) => Some(cmda),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create command allocator: {:?}",
-                    err
-                )))
-            }
-        };
+        let mut command_allocator: Option<ID3D12CommandAllocator>;
+        if let Some(device) = self.device.clone() {
+            match unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) } {
+                Ok(cmda) => command_allocator = Some(cmda),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create command allocator: {:?}",
+                        err
+                    )))
+                }
+            };
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create command allocator"
+            )));
+        }
 
         println!("command allocator creation succeeded");
-        Ok(command_allocator.unwrap().clone())
+
+        if let Some(cmda) = command_allocator {
+            return Ok(cmda);
+        } else {
+            return Err(Dx12Error::new(&format!(
+                "Failed to create command allocator"
+            )));
+        }
     }
 
     //コマンドリストの生成
     fn create_command_list(&self) -> std::result::Result<ID3D12GraphicsCommandList, Dx12Error> {
         //コマンドリスト生成
-        let command_list: Option<ID3D12GraphicsCommandList> = match unsafe {
-            self.device.as_ref().unwrap().CreateCommandList(
-                0,
-                D3D12_COMMAND_LIST_TYPE_DIRECT,
-                self.command_allocator.as_ref().unwrap(),
-                None,
-            )
-        } {
-            Ok(cmdl) => Some(cmdl),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create command list: {:?}",
-                    err
-                )))
-            }
-        };
+
+        let mut command_list: Option<ID3D12GraphicsCommandList> = None;
+        if let (Some(ref device), Some(ref cmda)) =
+            (self.device.clone(), self.command_allocator.as_ref())
+        {
+            match unsafe {
+                device.CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmda.clone(), None)
+            } {
+                Ok(cmdl) => command_list = Some(cmdl),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create command list: {:?}",
+                        err
+                    )))
+                }
+            };
+        } else {
+            return Err(Dx12Error::new(&format!("Failed to create command list")));
+        }
 
         //コマンドリストは開かれている状態で生成されるので，一度閉じる
         if let Some(command_list_ref) = command_list.as_ref() {
@@ -701,20 +741,20 @@ impl Dx12Resources {
         &self,
     ) -> std::result::Result<(ID3D12Fence, i32, HANDLE), Dx12Error> {
         //GPUと同期オブジェクト(fence)生成
-        let fence: Option<ID3D12Fence> = match unsafe {
-            self.device
-                .as_ref()
-                .unwrap()
-                .CreateFence(0, D3D12_FENCE_FLAG_NONE)
-        } {
-            Ok(fence) => Some(fence),
-            Err(err) => {
-                return Err(Dx12Error::new(&format!(
-                    "Failed to create fence: {:?}",
-                    err
-                )))
-            }
-        };
+        let mut fence: Option<ID3D12Fence> = None;
+        if let Some(ref device) = self.device.clone() {
+            match unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
+                Ok(f) => fence = Some(f),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to create fence: {:?}",
+                        err
+                    )))
+                }
+            };
+        } else {
+            return Err(Dx12Error::new("Failed to create fence"));
+        }
 
         //フェンスの値 設定
         let fence_value: i32 = 1;
