@@ -2,14 +2,15 @@
 mod dx12error;
 use dx12error::Dx12Error;
 
+#[path = "../src/renderer.rs"]
+mod renderer;
+use renderer::MainRenderingResources;
+
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
-    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*,
-    Win32::Graphics::Dxgi::IDXGIFactory6, Win32::Graphics::Dxgi::*,
-    Win32::System::LibraryLoader::*, Win32::System::Threading::*,
+    core::*, Win32::Foundation::*, Win32::System::LibraryLoader::*,
     Win32::UI::WindowsAndMessaging::*,
 };
 //ウィンドウプロシージャ
@@ -112,7 +113,7 @@ impl Window {
     }
 
     //メッセージループ処理
-    pub fn process_messages_loop(&mut self) {
+    pub fn process_messages_loop(&mut self, resouce: &mut MainRenderingResources) {
         loop {
             let mut msg: MSG = MSG::default();
             if unsafe { PeekMessageA(&mut msg, None, 0, 0, PM_REMOVE) }.into() {
@@ -120,6 +121,8 @@ impl Window {
                     TranslateMessage(&msg);
                     DispatchMessageA(&msg);
                 }
+
+                resouce.begin_reander();
 
                 if msg.message == WM_QUIT {}
             }

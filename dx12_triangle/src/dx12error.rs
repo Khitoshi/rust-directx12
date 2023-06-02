@@ -10,6 +10,11 @@ impl Dx12Error {
             message: message.to_string(),
         }
     }
+
+    #[allow(dead_code)]
+    pub fn get_message(&self) -> &str {
+        return &self.message;
+    }
 }
 
 impl fmt::Display for Dx12Error {

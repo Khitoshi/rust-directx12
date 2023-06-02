@@ -2,12 +2,13 @@
 mod dx12error;
 use dx12error::Dx12Error;
 
+#[path = "../src/render_context.rs"]
+mod render_context;
+use render_context::RenderContext;
+
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
-    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*,
-    Win32::Graphics::Dxgi::IDXGIFactory6, Win32::Graphics::Dxgi::*,
-    Win32::System::LibraryLoader::*, Win32::System::Threading::*,
-    Win32::UI::WindowsAndMessaging::*,
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::*, Win32::Graphics::Direct3D12::*,
+    Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*, Win32::System::Threading::*,
 };
 
 use std::ffi::OsString;
@@ -15,7 +16,7 @@ use std::os::windows::ffi::OsStringExt;
 
 const FRAME_BUFFER_COUNT: u32 = 2;
 
-pub struct Dx12Resources {
+pub struct MainRenderingResources {
     //ファクトリー デバッグ用
     dxgi_factory: Option<IDXGIFactory4>,
     //デバイス
@@ -51,15 +52,31 @@ pub struct Dx12Resources {
     //コマンドリスト
     command_list: Option<ID3D12GraphicsCommandList>,
 
+    //パイプラインステート
+    pipeline_state: Option<ID3D12PipelineState>,
+
     //GPUと同期するオブジェクト
     fence: Option<ID3D12Fence>,
     //フェンスの値
     fence_value: i32,
     //
     fence_event: Option<HANDLE>,
+
+    //バックバッファ
+    frame_index: u32,
+
+    //レンダーコンテキスト
+    render_context: Option<RenderContext>,
+
+    //ビューポート。
+    view_Port_: Option<D3D12_VIEWPORT>,
+
+    //
+    current_frame_buffer_rtv_handle: Option<D3D12_CPU_DESCRIPTOR_HANDLE>,
+    current_frame_buffer_dsv_handle: Option<D3D12_CPU_DESCRIPTOR_HANDLE>,
 }
 
-impl Default for Dx12Resources {
+impl Default for MainRenderingResources {
     fn default() -> Self {
         Self {
             dxgi_factory: None,
@@ -80,14 +97,25 @@ impl Default for Dx12Resources {
             command_allocator: None,
             command_list: None,
 
+            pipeline_state: None,
+
             fence: None,
             fence_value: 0,
             fence_event: None,
+
+            frame_index: 0,
+
+            render_context: None,
+
+            view_Port_: None,
+
+            current_frame_buffer_rtv_handle: None,
+            current_frame_buffer_dsv_handle: None,
         }
     }
 }
 
-impl Dx12Resources {
+impl MainRenderingResources {
     //other method
 
     //初期化関数
@@ -95,8 +123,8 @@ impl Dx12Resources {
         hwnd: HWND,
         frame_buffer_width: u64,
         frame_buffer_height: u32,
-    ) -> std::result::Result<Dx12Resources, Box<dyn std::error::Error>> {
-        let mut dx12_resources: Dx12Resources = Default::default();
+    ) -> std::result::Result<MainRenderingResources, Box<dyn std::error::Error>> {
+        let mut dx12_resources: MainRenderingResources = Default::default();
 
         //DXGIファクトリ生成
         dx12_resources.dxgi_factory = Some(dx12_resources.create_factory()?);
@@ -155,8 +183,8 @@ impl Dx12Resources {
     }
 }
 
-//生成処理の実装
-impl Dx12Resources {
+//create処理の実装
+impl MainRenderingResources {
     //DXGIファクトリ生成
     fn create_factory(&self) -> std::result::Result<IDXGIFactory4, Dx12Error> {
         //デバッグ時のみ入る
@@ -308,9 +336,9 @@ impl Dx12Resources {
                 match unsafe { D3D12CreateDevice(adapter, level, &mut device) } {
                     Ok(_) => {
                         //生成に成功したのでdeviceを返す
-                        println!("Device creation succeeded");
-                        if let Some(ref device) = self.device {
-                            return Ok(device.clone());
+                        if let Some(ref d) = device {
+                            println!("Device creation succeeded");
+                            return Ok(d.clone());
                         }
                     }
                     Err(_) => {
@@ -770,11 +798,110 @@ impl Dx12Resources {
             }
         };
 
-        println!("fence creation succeeded");
-        Ok((
-            fence.unwrap().clone(),
-            fence_value.clone(),
-            handle.unwrap().clone(),
-        ))
+        if let (Some(f), Some(h)) = (fence, handle) {
+            println!("fence creation succeeded");
+            return Ok((f.clone(), fence_value.clone(), h.clone()));
+        } else {
+            return Err(Dx12Error::new("Failed to create fence event"));
+        }
+    }
+}
+
+//レンダリング 開始/終了 処理
+impl MainRenderingResources {
+    //レンダリング開始処理
+    pub fn begin_reander(&mut self) -> std::result::Result<(), Dx12Error> {
+        if let Some(ref sp) = self.swap_chain {
+            self.frame_index = unsafe { sp.GetCurrentBackBufferIndex() };
+        }
+
+        //コマンドアロケーターをリセット
+        if let Some(cmda) = self.command_allocator.as_ref() {
+            match unsafe { cmda.Reset() } {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to reset cmd allocator : {:?}",
+                        err
+                    )))
+                }
+            }
+        } else {
+            return Err(Dx12Error::new("Failed to reset cmd allocator"));
+        }
+
+        //レンダーコンテキストをリセット
+        if let (Some(rc), Some(cmda), Some(ps)) = (
+            self.render_context.as_mut(),
+            self.command_allocator.as_ref(),
+            self.pipeline_state.as_ref(),
+        ) {
+            match rc.reset(cmda, ps) {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed to reset RenderContext: {:?}",
+                        err
+                    )))
+                }
+            }
+        } else {
+            return Err(Dx12Error::new("Failed to reset cmd render context"));
+        }
+
+        //ビューポートとシザリング矩形をセットで設定
+        if let (Some(rc), Some(vp)) = (self.render_context.as_mut(), self.view_Port_.as_ref()) {
+            rc.set_viewport_and_scissor(*vp);
+        } else {
+            return Err(Dx12Error::new("Failed to set viewport and scissor"));
+        }
+
+        //レンダーターゲットビューバッファのディスクリプタヒープ開始アドレス取得
+        if let (Some(rh), Some(cfbrh)) = (
+            self.rtv_heap.clone(),
+            self.current_frame_buffer_rtv_handle.as_mut(),
+        ) {
+            unsafe {
+                *cfbrh = rh.GetCPUDescriptorHandleForHeapStart();
+            };
+            //アドレスをずらす
+            cfbrh.ptr += (self.frame_index * self.rtv_descriptor_size) as usize;
+        } else {
+            return Err(Dx12Error::new(
+                "Failed to set current frame buffer rtv handle",
+            ));
+        }
+
+        //深度ステンシルバッファのディスクリプタヒープの開始アドレスを取得
+        if let Some(dh) = self.dsv_heap.clone() {
+            unsafe {
+                self.current_frame_buffer_dsv_handle =
+                    Some(dh.GetCPUDescriptorHandleForHeapStart());
+            };
+        } else {
+            return Err(Dx12Error::new(
+                "Failed to set current frame buffer dsv handle",
+            ));
+        }
+
+        //バックバッファがレンダリングターゲットとして設定可能になるまで待つ
+        //self.render_context.wait_until_to_possible_set_render_target();
+
+        //画面クリアカラー設定
+        let clear_color: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
+        if let (Some(rc), Some(cfbrh), Some(cfbdh)) = (
+            self.render_context.as_mut(),
+            self.current_frame_buffer_rtv_handle,
+            self.current_frame_buffer_dsv_handle,
+        ) {
+            rc.clear_render_target(cfbrh, clear_color);
+            rc.clear_depth_stencil_view(cfbdh, 1.0_f32);
+        } else {
+            return Err(Dx12Error::new(
+                "Failed to set clear_render_target , clear_depth_stencil_view",
+            ));
+        }
+
+        return Ok(());
     }
 }
