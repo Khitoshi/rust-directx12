@@ -92,16 +92,16 @@ impl SwapChain {
         };
 
         //スワップチェイン1を作成
-        let mut swap_chain1: Option<IDXGISwapChain1>;
-        match unsafe { factory.CreateSwapChainForHwnd(&cmd_queue, *hwnd, &desc, None, None) } {
-            Ok(sc) => Some(sc),
-            Err(err) => {
-                return Err(dx12error::Dx12Error::new(&format!(
-                    "Failed to create swap chain: {:?}",
-                    err
-                )));
-            }
-        };
+        let mut swap_chain1: Option<IDXGISwapChain1> =
+            match unsafe { factory.CreateSwapChainForHwnd(&cmd_queue, *hwnd, &desc, None, None) } {
+                Ok(sc) => Some(sc),
+                Err(err) => {
+                    return Err(dx12error::Dx12Error::new(&format!(
+                        "Failed to create swap chain: {:?}",
+                        err
+                    )));
+                }
+            };
 
         //swapchain1 を swapchain4に変換する
         if let Some(ref sc1) = swap_chain1.as_ref() {
@@ -122,11 +122,32 @@ impl SwapChain {
     //バックバッファインデックス取得
     fn get_back_buffer_index(&self) -> std::result::Result<u32, dx12error::Dx12Error> {
         //現在のバックバッファインデックスを取得
-        if let Some(ref sc4) = self.dxgi_swapchain {
+        if let Some(sc4) = self.dxgi_swapchain.clone() {
             Ok(unsafe { sc4.GetCurrentBackBufferIndex() })
         } else {
             return Err(dx12error::Dx12Error::new("Swap chain not initialized"));
         }
+    }
+}
+
+//
+impl SwapChain {
+    pub fn present(&mut self) -> std::result::Result<(), dx12error::Dx12Error> {
+        if let Some(sc) = self.dxgi_swapchain.as_mut() {
+            match unsafe { sc.Present(1, 0) }.ok() {
+                Ok(()) => (),
+                Err(err) => {
+                    return Err(dx12error::Dx12Error::new(&format!(
+                        "Failed to present: {:?}",
+                        err
+                    )))
+                }
+            }
+        } else {
+            return Err(dx12error::Dx12Error::new("Swap chain not initialized"));
+        }
+
+        Ok(())
     }
 }
 

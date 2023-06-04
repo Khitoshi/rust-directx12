@@ -1,8 +1,7 @@
-#[path = "../src/renderer.rs"]
+#[path = "./renderer.rs"]
 mod renderer;
-use renderer::MainRenderingResources;
 
-#[path = "../src/window.rs"]
+#[path = "./window.rs"]
 mod window;
 
 fn main() {
@@ -22,15 +21,23 @@ fn main() {
         }
     };
 
-    let mut dx12_resources =
-        match MainRenderingResources::new(window.get_hwnd(), window_rect_right, window_rect_bottom)
-        {
-            Ok(resource) => resource,
-            Err(err) => {
-                println!("error!:{}", err);
-                return;
-            }
-        };
+    let mut dx12_resources = match renderer::MainRenderingResources::new(
+        window.get_hwnd(),
+        window_rect_right,
+        window_rect_bottom,
+    ) {
+        Ok(resource) => resource,
+        Err(err) => {
+            println!("error!:{}", err);
+            return;
+        }
+    };
 
-    window.process_messages_loop(&mut dx12_resources);
+    match window.process_messages_loop(&mut dx12_resources) {
+        Ok(_) => print!("success!"),
+        Err(err) => {
+            println!("error!:{}", err);
+            return;
+        }
+    }
 }

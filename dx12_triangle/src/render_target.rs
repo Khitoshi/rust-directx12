@@ -34,14 +34,15 @@ impl RenderTarget {
     ) -> std::result::Result<RenderTarget, dx12error::Dx12Error> {
         let mut rt: RenderTarget = RenderTarget::default();
 
-        rt.rtv_heap = match RenderTarget::create_rtv_descriptor_heap_for_frame_buffer(device) {
-            Ok(heap) => Some(heap),
-            Err(err) => return Err(err),
-        };
+        rt.rtv_heap =
+            match RenderTarget::create_rtv_descriptor_heap_for_frame_buffer(device.clone()) {
+                Ok(heap) => Some(heap),
+                Err(err) => return Err(err),
+            };
 
-        rt.rtv_descriptor_size = RenderTarget::get_rtv_descriptor_size(device);
+        rt.rtv_descriptor_size = RenderTarget::get_descriptor_handle_increment_size(device.clone());
 
-        rt.render_targets = match rt.create_rtv_for_fame_buffer(swapchain, device) {
+        rt.render_targets = match rt.create_rtv_for_fame_buffer(swapchain, device.clone()) {
             Ok(targets) => targets,
             Err(err) => return Err(err),
         };
@@ -74,7 +75,7 @@ impl RenderTarget {
     }
 
     //レンダリングターゲットビューのサイズ　取得
-    fn get_rtv_descriptor_size(device: ID3D12Device) -> u32 {
+    fn get_descriptor_handle_increment_size(device: ID3D12Device) -> u32 {
         unsafe { device.GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) }
     }
 
@@ -116,5 +117,32 @@ impl RenderTarget {
         }
 
         Ok(render_targets)
+    }
+}
+
+//ゲットmethod
+impl RenderTarget {
+    //レンダリングターゲットビューのディスクリプタヒープを取得
+    pub fn get_rtv_heap(&self) -> std::result::Result<&ID3D12DescriptorHeap, dx12error::Dx12Error> {
+        if let Some(rtvh) = self.rtv_heap.as_ref().clone() {
+            Ok(rtvh)
+        } else {
+            Err(dx12error::Dx12Error::new("No RTV heap"))
+        }
+    }
+
+    //レンダリングターゲットビューのサイズ　取得
+    pub fn get_rtv_descriptor_size(&self) -> u32 {
+        self.rtv_descriptor_size
+    }
+
+    //レンダリングターゲットビューの取得
+    pub fn get_render_targets(&self) -> Vec<ID3D12Resource> {
+        self.render_targets.clone()
+    }
+
+    //インデックスを指定してレンダリングターゲットビューの単体取得
+    pub fn get_render_target(&self, num: usize) -> ID3D12Resource {
+        self.render_targets[num].clone()
     }
 }

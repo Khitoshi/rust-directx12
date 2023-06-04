@@ -81,3 +81,34 @@ impl Fence {
         };
     }
 }
+
+impl Fence {
+    pub fn add_fence_value(&mut self) {
+        self.fence_value += 1;
+    }
+}
+
+//get method
+impl Fence {
+    //フェンスを取得
+    pub fn get_fence(&self) -> std::result::Result<ID3D12Fence, dx12error::Dx12Error> {
+        if let Some(fence) = self.fence.as_ref() {
+            return Ok(fence.clone());
+        } else {
+            return Err(dx12error::Dx12Error::new(&format!(
+                "Failed to get fence: {:?}",
+                "fence is none"
+            )));
+        }
+    }
+
+    //フェンスの値を取得
+    pub fn get_fence_value(&self) -> u64 {
+        return self.fence_value;
+    }
+
+    //フェンスイベントを取得
+    pub fn get_fence_event(&self) -> HANDLE {
+        return self.fence_event.unwrap();
+    }
+}

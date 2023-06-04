@@ -32,13 +32,13 @@ impl DepthStencil {
     ) -> std::result::Result<DepthStencil, dx12error::Dx12Error> {
         let mut ds: DepthStencil = DepthStencil::default();
 
-        ds.dsv_heap = match DepthStencil::create_depth_stencil_view_heap(deivce) {
+        ds.dsv_heap = match DepthStencil::create_depth_stencil_view_heap(deivce.clone()) {
             Ok(heap) => Some(heap),
             Err(err) => return Err(err),
         };
 
         ds.depth_stencil_buffer = match DepthStencil::create_dsv_for_fame_buffer(
-            deivce,
+            deivce.clone(),
             frame_buffer_width,
             frame_buffer_height,
         ) {
@@ -140,6 +140,38 @@ impl DepthStencil {
         } else {
             Err(dx12error::Dx12Error::new(
                 "Failed to create depth stencil buffer",
+            ))
+        }
+    }
+}
+
+//ゲットmethod
+impl DepthStencil {
+    //深度ステンシルビューのサイズを取得
+    pub fn get_dsv_descriptor_size(&self) -> u32 {
+        self.dsv_descriptor_size
+    }
+
+    //深度ステンシルビューのディスクリプタヒープを取得
+    pub fn get_dsv_heap(&self) -> std::result::Result<ID3D12DescriptorHeap, dx12error::Dx12Error> {
+        if let Some(dsvh) = self.dsv_heap.clone() {
+            Ok(dsvh)
+        } else {
+            Err(dx12error::Dx12Error::new(
+                "Failed to get depth stencil view heap",
+            ))
+        }
+    }
+
+    //深度ステンシルバッファを取得
+    pub fn get_depth_stencil_buffer(
+        &self,
+    ) -> std::result::Result<ID3D12Resource, dx12error::Dx12Error> {
+        if let Some(dsb) = self.depth_stencil_buffer.clone() {
+            Ok(dsb)
+        } else {
+            Err(dx12error::Dx12Error::new(
+                "Failed to get depth stencil buffer",
             ))
         }
     }

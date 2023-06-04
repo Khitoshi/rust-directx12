@@ -1,10 +1,9 @@
-#[path = "../src/dx12error.rs"]
+#[path = "./dx12error.rs"]
 mod dx12error;
 use dx12error::Dx12Error;
 
-#[path = "../src/renderer.rs"]
+#[path = "./renderer.rs"]
 mod renderer;
-use renderer::MainRenderingResources;
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -13,8 +12,8 @@ use windows::{
     core::*, Win32::Foundation::*, Win32::System::LibraryLoader::*,
     Win32::UI::WindowsAndMessaging::*,
 };
-//ウィンドウプロシージャ
 
+//ウィンドウプロシージャ
 extern "system" fn window_procedure(
     hwnd: HWND,
     msg: u32,
@@ -113,7 +112,11 @@ impl Window {
     }
 
     //メッセージループ処理
-    pub fn process_messages_loop(&mut self, resouce: &mut MainRenderingResources) {
+    pub fn process_messages_loop(
+        &mut self,
+        resouce: &mut crate::renderer::MainRenderingResources,
+    ) -> std::result::Result<(), Dx12Error> {
+        let mut i = 0;
         loop {
             let mut msg: MSG = MSG::default();
             if unsafe { PeekMessageA(&mut msg, None, 0, 0, PM_REMOVE) }.into() {
@@ -121,12 +124,38 @@ impl Window {
                     TranslateMessage(&msg);
                     DispatchMessageA(&msg);
                 }
+                //アプリケーションが終わる時にmessageがWM_QUITになる
+                if msg.message == WM_QUIT {
+                    break;
+                }
 
-                resouce.begin_reander();
+                //描画初期処理
+                match resouce.begin_render() {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(Dx12Error::new(&format!(
+                            "Failed to begin render: {:?}",
+                            err
+                        )))
+                    }
+                }
 
-                if msg.message == WM_QUIT {}
+                //描画初期処理
+                match resouce.end_render() {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(Dx12Error::new(&format!("Failed to end render: {:?}", err)))
+                    }
+                }
+            } else {
+                continue;
             }
+            i += 1;
+            //tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
+        println!("index:{}", i);
+
+        Ok(())
     }
 }
 
