@@ -1,7 +1,4 @@
-#[path = "./renderer.rs"]
 mod renderer;
-
-#[path = "./window.rs"]
 mod window;
 
 fn main() {

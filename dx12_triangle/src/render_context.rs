@@ -1,14 +1,13 @@
 #[path = "./dx12error.rs"]
 mod dx12error;
 
-use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::*, Win32::Graphics::Direct3D12::*,
-    Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*, Win32::System::Threading::*,
-};
+use std::cell::RefCell;
+use std::rc::Rc;
+use windows::{Win32::Foundation::*, Win32::Graphics::Direct3D12::*};
 
 pub struct RenderContext {
     //コマンドリスト
-    command_list: Option<ID3D12GraphicsCommandList4>,
+    command_list: Option<Rc<RefCell<ID3D12GraphicsCommandList4>>>,
     //現在のビューポート
     current_viewport: D3D12_VIEWPORT,
     //スクラッチリソースのリスト
@@ -31,11 +30,11 @@ impl Default for RenderContext {
         }
     }
 }
-
+#[allow(dead_code)]
 impl RenderContext {
     //生成
     pub fn new(
-        cmd_list: ID3D12GraphicsCommandList4,
+        cmd_list: Rc<RefCell<ID3D12GraphicsCommandList4>>,
     ) -> std::result::Result<RenderContext, dx12error::Dx12Error> {
         let mut rc: RenderContext = RenderContext::default();
         rc.command_list = Some(cmd_list);
@@ -51,7 +50,7 @@ impl RenderContext {
         if let Some(cmd_list) = self.command_list.as_mut() {
             unsafe {
                 if let Some(pipeline_state) = pipeline_state {
-                    match cmd_list.Reset(cmd_allocator, pipeline_state) {
+                    match cmd_list.borrow_mut().Reset(cmd_allocator, pipeline_state) {
                         Ok(_) => (),
                         Err(err) => {
                             return Err(dx12error::Dx12Error::new(&format!(
@@ -61,15 +60,10 @@ impl RenderContext {
                         }
                     }
                 } else {
-                    match cmd_list.Reset(cmd_allocator, None) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            return Err(dx12error::Dx12Error::new(&format!(
-                                "Failed to reset command list: {:?}",
-                                err
-                            )))
-                        }
-                    }
+                    return Err(dx12error::Dx12Error::new(&format!(
+                        "Failed to reset command list: {:?}",
+                        "pipeline state is none"
+                    )));
                 }
             }
         } else {
@@ -94,8 +88,8 @@ impl RenderContext {
         let scissor_rect: RECT = RECT {
             left: 0,
             top: 0,
-            bottom: viewport.Height as i32,
-            right: viewport.Width as i32,
+            bottom: viewport.clone().Height as i32,
+            right: viewport.clone().Width as i32,
         };
         match self.set_scissor_rect(scissor_rect) {
             Ok(_) => (),
@@ -105,7 +99,7 @@ impl RenderContext {
         //ビューポート設定
         if let Some(cmd_list) = self.command_list.as_mut() {
             unsafe {
-                cmd_list.RSSetViewports(&[viewport]);
+                cmd_list.borrow_mut().RSSetViewports(&[viewport.clone()]);
             }
         } else {
             return Err(dx12error::Dx12Error::new(&format!(
@@ -115,25 +109,25 @@ impl RenderContext {
         }
 
         //現在のビューポートを更新
-        self.current_viewport = viewport;
+        self.current_viewport = viewport.clone();
         Ok(())
     }
 
     //バックバッファがレンダリングターゲットとして設定可能になるまで待つ
     pub fn wait_until_to_possible_set_render_target(
         &mut self,
-        resouce: &mut ID3D12Resource,
+        resouce: &ID3D12Resource,
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         //状態遷移設定
         let barrier = RenderContext::transient_barrier(
-            resouce,
+            &resouce,
             D3D12_RESOURCE_STATE_PRESENT,
             D3D12_RESOURCE_STATE_RENDER_TARGET,
         );
 
         //画像を表示が終わったら描画状態に遷移させる
-        if let Some(cmd_list) = self.command_list.as_mut() {
-            unsafe { cmd_list.ResourceBarrier(&[barrier]) };
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            unsafe { cmd_list.borrow_mut().ResourceBarrier(&[barrier]) };
         } else {
             return Err(dx12error::Dx12Error::new(&format!(
                 "Failed to set RSSetViewports: {:?}",
@@ -147,7 +141,7 @@ impl RenderContext {
     //レンダリングターゲットへの描き込み待ち
     pub fn wait_until_finish_drawing_to_render_target(
         &mut self,
-        resouce: &mut ID3D12Resource,
+        resouce: &ID3D12Resource,
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         let barrier = RenderContext::transient_barrier(
             resouce,
@@ -156,8 +150,8 @@ impl RenderContext {
         );
 
         //描画が終わった後，画像を表示するための状態に遷移させる
-        if let Some(cmd_list) = self.command_list.as_mut() {
-            unsafe { cmd_list.ResourceBarrier(&[barrier]) };
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            unsafe { cmd_list.borrow_mut().ResourceBarrier(&[barrier]) };
         } else {
             return Err(dx12error::Dx12Error::new(&format!(
                 "Failed to set RSSetViewports: {:?}",
@@ -176,11 +170,11 @@ impl RenderContext {
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         if let Some(cmd_list) = self.command_list.as_mut() {
             unsafe {
-                cmd_list.ClearRenderTargetView(
+                cmd_list.borrow_mut().ClearRenderTargetView(
                     rtv_handle,
-                    &*[0.0_f32, 0.2_f32, 0.4_f32, 1.0_f32].as_ptr(),
+                    &*clear_color.as_ptr(),
                     None,
-                )
+                );
             };
         } else {
             return Err(dx12error::Dx12Error::new(&format!(
@@ -188,7 +182,6 @@ impl RenderContext {
                 "command list is none"
             )));
         }
-
         Ok(())
     }
 
@@ -200,7 +193,7 @@ impl RenderContext {
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         if let Some(cmd_list) = self.command_list.as_mut() {
             unsafe {
-                cmd_list.ClearDepthStencilView(
+                cmd_list.borrow_mut().ClearDepthStencilView(
                     dsv_handle,
                     D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
                     clear_value,
@@ -218,8 +211,8 @@ impl RenderContext {
     }
 
     pub fn close(&mut self) -> std::result::Result<(), dx12error::Dx12Error> {
-        if let Some(cmd_list) = self.command_list.as_mut() {
-            match unsafe { cmd_list.Close() } {
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            match unsafe { cmd_list.borrow_mut().Close() } {
                 Ok(_) => (),
                 Err(err) => {
                     return Err(dx12error::Dx12Error::new(&format!(
@@ -247,8 +240,8 @@ impl RenderContext {
         scissor_rect: RECT,
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         //シザリング矩形を設定
-        if let Some(cmd_list) = self.command_list.as_mut() {
-            unsafe { cmd_list.RSSetScissorRects(&[scissor_rect]) };
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            unsafe { cmd_list.borrow_mut().RSSetScissorRects(&[scissor_rect]) };
         } else {
             return Err(dx12error::Dx12Error::new(&format!(
                 "Failed to set scissor rect: {:?}",
@@ -278,6 +271,25 @@ impl RenderContext {
             },
         }
     }
+
+    pub fn reset_pso_none(
+        &mut self,
+        cmd_allocator: &ID3D12CommandAllocator,
+    ) -> Result<(), dx12error::Dx12Error> {
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            match unsafe { cmd_list.borrow_mut().Reset(cmd_allocator, None) } {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(dx12error::Dx12Error::new(&format!(
+                        "Failed to reset command list: {:?}",
+                        err
+                    )))
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 //セット method
@@ -285,13 +297,15 @@ impl RenderContext {
     //レンダリングターゲットを設定する
     pub fn set_render_target(
         &mut self,
-        rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
-        dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE,
+        rtv_handle: &D3D12_CPU_DESCRIPTOR_HANDLE,
+        dsv_handle: &D3D12_CPU_DESCRIPTOR_HANDLE,
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         if let Some(cmd_list) = self.command_list.as_mut() {
             unsafe {
                 //cmd_list.OMSetRenderTargets(1, Some(&rtv_handle), FALSE, Some(&dsv_handle));
-                cmd_list.OMSetRenderTargets(1, Some(&rtv_handle), false, None);
+                cmd_list
+                    .borrow_mut()
+                    .OMSetRenderTargets(1, Some(rtv_handle), false, None);
             }
         } else {
             return Err(dx12error::Dx12Error::new(&format!(

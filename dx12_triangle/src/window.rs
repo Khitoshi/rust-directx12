@@ -80,10 +80,14 @@ impl Window {
         };
 
         //シザリング登録
-        if unsafe { AdjustWindowRect(&mut window_rect, WS_OVERLAPPEDWINDOW, false) }.as_bool()
-            != true
-        {
-            return Err(Dx12Error::new("Failed to adjust window rect"));
+        match unsafe { AdjustWindowRect(&mut window_rect, WS_OVERLAPPEDWINDOW, false) } {
+            Ok(_) => (),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to adjust window rect: {:?}",
+                    err
+                )))
+            }
         }
         //ウィンドウ作成
         let hwnd = unsafe {

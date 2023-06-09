@@ -1,23 +1,36 @@
+#[path = "dx12error.rs"]
 mod dx12error;
 use dx12error::Dx12Error;
 
+#[path = "graphics_settings.rs"]
 mod graphics_settings;
 
+#[path = "swapchain.rs"]
 mod swapchain;
 
+#[path = "depthstencil.rs"]
 mod depthstencil;
-mod fence;
-mod render_context;
-mod render_target;
 use depthstencil::DepthStencil;
+
+#[path = "fence.rs"]
+mod fence;
+
+#[path = "render_context.rs"]
+mod render_context;
+
+#[path = "render_target.rs"]
+mod render_target;
 
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::*, Win32::Graphics::Direct3D12::*,
-    Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*, Win32::System::Threading::*,
+    Win32::Graphics::Dxgi::*, Win32::System::Threading::*,
 };
 
+use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use std::rc::Rc;
 use std::sync::Arc;
 
 pub struct MainRenderingResources {
@@ -32,7 +45,7 @@ pub struct MainRenderingResources {
     // コマンドアロケータ
     command_allocator: Option<ID3D12CommandAllocator>,
     // コマンドリスト
-    command_list: Option<ID3D12GraphicsCommandList4>,
+    command_list: Option<Rc<RefCell<ID3D12GraphicsCommandList4>>>,
     // フェンス
     fence: fence::Fence,
     // スワップチェーン (スワップチェーンは、フレームバッファを管理するための仕組み)
@@ -42,7 +55,7 @@ pub struct MainRenderingResources {
     // 深度ステンシル (深度バッファやステンシルバッファを管理)
     depth_stencil: DepthStencil,
     // パイプラインステート (GPUに対する描画の設定を管理)
-    pipeline_state: Option<ID3D12PipelineState>,
+    //pipeline_state: Option<ID3D12PipelineState>,
     // ビューポート
     viewport: D3D12_VIEWPORT,
     //レンダーコンテキスト
@@ -66,7 +79,7 @@ impl Default for MainRenderingResources {
             swapchain: swapchain::SwapChain::default(),
             render_target: render_target::RenderTarget::default(),
             depth_stencil: DepthStencil::default(),
-            pipeline_state: None,
+            //pipeline_state: None,
             viewport: D3D12_VIEWPORT {
                 ..Default::default()
             },
@@ -86,6 +99,7 @@ impl MainRenderingResources {
     //other method
 
     //初期化関数
+    #[allow(dead_code)]
     pub fn new(
         hwnd: HWND,
         frame_buffer_width: u64,
@@ -124,7 +138,9 @@ impl MainRenderingResources {
         dx12_resources.command_allocator = Some(dx12_resources.create_command_allocator()?);
 
         //コマンドリストの生成
-        dx12_resources.command_list = Some(dx12_resources.create_command_list()?);
+
+        dx12_resources.command_list =
+            Some(Rc::new(RefCell::new(dx12_resources.create_command_list()?)));
 
         //GPUと同期オブジェクト生成
         dx12_resources.fence = dx12_resources.create_fence()?;
@@ -453,10 +469,9 @@ impl MainRenderingResources {
     //コマンドアロケータの生成
     fn create_command_allocator(&self) -> std::result::Result<ID3D12CommandAllocator, Dx12Error> {
         //コマンドアロケータの生成
-        let mut command_allocator: Option<ID3D12CommandAllocator>;
         if let Some(device) = self.device.clone() {
             match unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) } {
-                Ok(cmda) => command_allocator = Some(cmda),
+                Ok(cmda) => return Ok(cmda),
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
                         "Failed to create command allocator: {:?}",
@@ -469,22 +484,12 @@ impl MainRenderingResources {
                 "Failed to create command allocator"
             )));
         }
-
-        println!("command allocator creation succeeded");
-
-        if let Some(cmda) = command_allocator {
-            return Ok(cmda);
-        } else {
-            return Err(Dx12Error::new(&format!(
-                "Failed to create command allocator"
-            )));
-        }
     }
 
     //コマンドリストの生成
     fn create_command_list(&self) -> std::result::Result<ID3D12GraphicsCommandList4, Dx12Error> {
         //コマンドリスト生成
-        let mut command_list: Option<ID3D12GraphicsCommandList4> = None;
+        let mut command_list: Option<ID3D12GraphicsCommandList4>;
         if let (Some(ref device), Some(ref cmda)) =
             (self.device.clone(), self.command_allocator.as_ref())
         {
@@ -596,6 +601,7 @@ impl MainRenderingResources {
 }
 
 //レンダリング 開始/終了 処理
+#[allow(dead_code)]
 impl MainRenderingResources {
     //レンダリング開始処理
     pub fn begin_render(&mut self) -> std::result::Result<(), Dx12Error> {
@@ -629,10 +635,7 @@ impl MainRenderingResources {
 
         //レンダリングコンテキストもリセット
         if let Some(cmd_allocator) = self.command_allocator.as_mut() {
-            match self
-                .render_context
-                .reset(cmd_allocator, self.pipeline_state.as_ref())
-            {
+            match self.render_context.reset_pso_none(cmd_allocator) {
                 Ok(_) => (),
                 Err(err) => {
                     return Err(Dx12Error::new(&format!(
@@ -646,10 +649,7 @@ impl MainRenderingResources {
         }
 
         //ビューポートを設定
-        match self
-            .render_context
-            .set_viewport_and_scissor(self.viewport.clone())
-        {
+        match self.render_context.set_viewport_and_scissor(self.viewport) {
             Ok(()) => (),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
@@ -659,38 +659,11 @@ impl MainRenderingResources {
             }
         }
 
-        //現在のレンダリングターゲットビューのフレームバッファ設定
-        let mut current_frame_buffer_rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
-            match self.render_target.get_rtv_heap() {
-                Ok(rtvh) => unsafe { rtvh.GetCPUDescriptorHandleForHeapStart() },
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed get current frame buffer rtv handle {:?}",
-                        err
-                    )))
-                }
-            };
-        current_frame_buffer_rtv_handle.ptr +=
-            (self.frame_index.clone() + self.render_target.get_rtv_descriptor_size()) as usize;
-
-        //深度ステンシルバッファのディスクリプタヒープの開始アドレスを取得。
-        let mut current_frame_buffer_dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
-            match self.depth_stencil.get_dsv_heap() {
-                Ok(dh) => unsafe { dh.GetCPUDescriptorHandleForHeapStart() },
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed get current frame buffer dsv handle {:?}",
-                        err
-                    )))
-                }
-            };
-
         //バックバッファがレンダリングターゲットとして設定可能になるまで待機
         match self
             .render_context
             .wait_until_to_possible_set_render_target(
-                &mut self
-                    .render_target
+                self.render_target
                     .get_render_target(self.frame_index as usize),
             ) {
             Ok(()) => (),
@@ -702,10 +675,37 @@ impl MainRenderingResources {
             }
         }
 
+        //現在のレンダリングターゲットビューのフレームバッファ設定
+        let current_frame_buffer_rtv_handle: D3D12_CPU_DESCRIPTOR_HANDLE = match self
+            .render_target
+            .get_current_frame_buffer(self.frame_index as usize)
+        {
+            Ok(rtvh) => rtvh,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed get current frame buffer rtv handle {:?}",
+                    err
+                )))
+            }
+        };
+
+        //深度ステンシルバッファのディスクリプタヒープの開始アドレスを取得
+        let current_frame_buffer_dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
+            match self.depth_stencil.get_heap_start() {
+                Ok(dh) => dh,
+                Err(err) => {
+                    return Err(Dx12Error::new(&format!(
+                        "Failed get current frame buffer dsv handle {:?}",
+                        err
+                    )))
+                }
+            };
+
         //レンダリングターゲット設定
+
         match self.render_context.set_render_target(
-            current_frame_buffer_rtv_handle,
-            current_frame_buffer_dsv_handle,
+            &current_frame_buffer_rtv_handle,
+            &current_frame_buffer_dsv_handle,
         ) {
             Ok(()) => (),
             Err(err) => {
@@ -719,7 +719,6 @@ impl MainRenderingResources {
         //クリアカラー設定
         let clear_color: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
         //レンダリングターゲットのクリア
-
         match self
             .render_context
             .clear_render_target_view(current_frame_buffer_rtv_handle, clear_color)
@@ -757,8 +756,7 @@ impl MainRenderingResources {
         match self
             .render_context
             .wait_until_finish_drawing_to_render_target(
-                &mut self
-                    .render_target
+                self.render_target
                     .get_render_target(self.frame_index as usize),
             ) {
             Ok(_) => (),
@@ -782,12 +780,13 @@ impl MainRenderingResources {
         }
 
         //コマンドを実行するためにコマンドリストをID3D12CommandListに変換
-        let mut command_list: Option<ID3D12CommandList>;
-        if let Some(cmd_list) = self.command_list.clone() {
-            command_list = Some(cmd_list.can_clone_into());
+        let mut command_list: Option<ID3D12CommandList> = None;
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            command_list = Some(cmd_list.borrow().can_clone_into());
         } else {
             return Err(Dx12Error::new("Failed to execute command list"));
         }
+
         //コマンドを実行
         if let Some(cmd_queue) = self.command_queue.clone() {
             unsafe { cmd_queue.ExecuteCommandLists(&[command_list]) }
@@ -833,9 +832,11 @@ impl MainRenderingResources {
 
         //前のフレームが終了するまでまつ
         match self.fence.get_fence() {
-            Ok(fence) => unsafe {
-                if fence.GetCompletedValue() < fence_value {
-                    match fence.SetEventOnCompletion(fence_value, self.fence.get_fence_event()) {
+            Ok(fence) => {
+                if unsafe { fence.GetCompletedValue() } < fence_value {
+                    match unsafe {
+                        fence.SetEventOnCompletion(fence_value, self.fence.get_fence_event())
+                    } {
                         Ok(_) => (),
                         Err(err) => {
                             return Err(Dx12Error::new(&format!(
@@ -845,11 +846,17 @@ impl MainRenderingResources {
                         }
                     }
 
-                    if WaitForSingleObject(self.fence.get_fence_event(), INFINITE) == WAIT_FAILED {
-                        return Err(Dx12Error::new("Failed to wait draw"));
+                    match unsafe { WaitForSingleObject(self.fence.get_fence_event(), INFINITE) } {
+                        Ok(_) => (),
+                        err => {
+                            return Err(Dx12Error::new(&format!(
+                                "Failed to wait for single object {:?}",
+                                err
+                            )))
+                        }
                     }
                 }
-            },
+            }
             Err(err) => return Err(Dx12Error::new(&format!("Failed to get fence {:?}", err))),
         }
 

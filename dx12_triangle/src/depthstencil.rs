@@ -163,6 +163,18 @@ impl DepthStencil {
         }
     }
 
+    pub fn get_heap_start(
+        &self,
+    ) -> std::result::Result<D3D12_CPU_DESCRIPTOR_HANDLE, dx12error::Dx12Error> {
+        if let Some(dsvh) = self.dsv_heap.clone() {
+            Ok(unsafe { dsvh.GetCPUDescriptorHandleForHeapStart() })
+        } else {
+            Err(dx12error::Dx12Error::new(
+                "Failed to get depth stencil view heap start",
+            ))
+        }
+    }
+
     //深度ステンシルバッファを取得
     pub fn get_depth_stencil_buffer(
         &self,

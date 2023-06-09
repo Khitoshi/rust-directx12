@@ -131,6 +131,21 @@ impl RenderTarget {
         }
     }
 
+    pub fn get_current_frame_buffer(
+        &self,
+        frame_buffer_index: usize,
+    ) -> std::result::Result<D3D12_CPU_DESCRIPTOR_HANDLE, dx12error::Dx12Error> {
+        //レンダリングターゲットビューのディスクリプタヒープを取得
+        let rtv_heap = self
+            .rtv_heap
+            .as_ref()
+            .ok_or(dx12error::Dx12Error::new("No RTV heap"))?;
+
+        let mut rtv_handle = unsafe { rtv_heap.GetCPUDescriptorHandleForHeapStart() };
+        rtv_handle.ptr += frame_buffer_index * self.rtv_descriptor_size as usize;
+        return Ok(rtv_handle);
+    }
+
     //レンダリングターゲットビューのサイズ　取得
     pub fn get_rtv_descriptor_size(&self) -> u32 {
         self.rtv_descriptor_size
@@ -142,7 +157,7 @@ impl RenderTarget {
     }
 
     //インデックスを指定してレンダリングターゲットビューの単体取得
-    pub fn get_render_target(&self, num: usize) -> ID3D12Resource {
-        self.render_targets[num].clone()
+    pub fn get_render_target(&self, num: usize) -> &ID3D12Resource {
+        &self.render_targets[num]
     }
 }
