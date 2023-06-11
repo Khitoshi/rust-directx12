@@ -1,31 +1,43 @@
+//エラー取得用 module
 #[path = "./dx12error.rs"]
 mod dx12error;
 
 use windows::{Win32::Foundation::*, Win32::Graphics::Direct3D12::*, Win32::System::Threading::*};
 
-//GPUとCPUの同期を取るためのオブジェクト
+/// GPUとCPUの同期を取るためのオブジェクト
+///
+/// # Fields
+/// *  'fence' - フェンス
+/// *  'fence_value' - フェンスの値
+/// *  'fence_event' - フェンスイベント
 pub struct Fence {
-    //フェンス
     fence: Option<ID3D12Fence>,
-    // フェンスの値
-    fence_value: u64,
-    // フェンスイベント
-    fence_event: Option<HANDLE>,
+    value: Option<u64>,
+    event: Option<HANDLE>,
 }
 
+/// Fenceの初期化
 impl Default for Fence {
     fn default() -> Self {
         Self {
             fence: None,
-            fence_value: 0,
-            fence_event: None,
+            value: None,
+            event: None,
         }
     }
 }
 
 impl Fence {
-    //生成
-    pub fn new(device: ID3D12Device) -> std::result::Result<Fence, dx12error::Dx12Error> {
+    /// Fenceの生成
+    ///
+    /// # Arguments
+    /// *  'device' - デバイス
+    ///
+    /// # Returns
+    /// *  'Ok(Fence)' - フェンス構造体
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    pub fn create(device: &ID3D12Device) -> std::result::Result<Fence, dx12error::Dx12Error> {
         let mut fence: Fence = Fence::default();
 
         //fence生成
@@ -35,9 +47,10 @@ impl Fence {
         };
 
         //fenceの値設定
-        fence.fence_value = Fence::create_fence_value();
+        fence.value = Some(Fence::create_value());
 
-        fence.fence_event = match Fence::create_fence_event() {
+        //イベント生成
+        fence.event = match Fence::create_event() {
             Ok(event) => Some(event),
             Err(err) => return Err(err),
         };
@@ -45,9 +58,17 @@ impl Fence {
         Ok(fence)
     }
 
-    //fence生成
+    /// fence生成
+    ///
+    /// # Arguments
+    /// *  'device' - デバイス
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12Fence)' - フェンス
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_fence(
-        device: ID3D12Device,
+        device: &ID3D12Device,
     ) -> std::result::Result<ID3D12Fence, dx12error::Dx12Error> {
         //GPUと同期オブジェクト(fence)生成
         match unsafe { device.CreateFence(0, D3D12_FENCE_FLAG_NONE) } {
@@ -61,54 +82,87 @@ impl Fence {
         };
     }
 
-    //フェンスの値設定
-    fn create_fence_value() -> u64 {
+    ///フェンスの値設定
+    ///
+    /// # Returns
+    /// *  'u64' - フェンスの値
+    ///
+    fn create_value() -> u64 {
         let value: u64 = 1;
-        return value;
+        value
     }
 
-    //フェンスイベント
-    fn create_fence_event() -> std::result::Result<HANDLE, dx12error::Dx12Error> {
-        //フェンス イベントの設置
+    ///フェンス イベントの生成
+    ///
+    /// # Returns
+    /// *  'Ok(HANDLE)' - フェンス イベント
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    fn create_event() -> std::result::Result<HANDLE, dx12error::Dx12Error> {
+        //フェンス イベントの生成
         match unsafe { CreateEventA(None, false, false, None) } {
-            Ok(event) => return Ok(event),
-            Err(err) => {
-                return Err(dx12error::Dx12Error::new(&format!(
-                    "Failed to create fence event: {:?}",
-                    err
-                )))
-            }
-        };
+            Ok(event) => Ok(event),
+            Err(err) => Err(dx12error::Dx12Error::new(&format!(
+                "Failed to create fence event: {:?}",
+                err
+            ))),
+        }
     }
 }
 
+///add method
 impl Fence {
-    pub fn add_fence_value(&mut self) {
-        self.fence_value += 1;
+    /// フェンスの値を加算
+    ///
+    /// # Returns
+    /// *  'Ok(())' - 成功
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    pub fn add_value(&mut self) -> std::result::Result<(), dx12error::Dx12Error> {
+        if let Some(v) = self.value.as_mut() {
+            *v += 1;
+            Ok(())
+        } else {
+            Err(dx12error::Dx12Error::new(
+                "Failed to add fence value: value is None",
+            ))
+        }
     }
 }
 
 //get method
 impl Fence {
-    //フェンスを取得
-    pub fn get_fence(&self) -> std::result::Result<ID3D12Fence, dx12error::Dx12Error> {
-        if let Some(fence) = self.fence.as_ref() {
-            return Ok(fence.clone());
-        } else {
-            return Err(dx12error::Dx12Error::new(&format!(
-                "Failed to get fence: {:?}",
-                "fence is none"
-            )));
-        }
+    ///フェンスを取得
+    /// # Returns
+    /// *  'Ok(&ID3D12Fence)' - フェンス
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    pub fn get_fence(&self) -> std::result::Result<&ID3D12Fence, dx12error::Dx12Error> {
+        self.fence
+            .as_ref()
+            .ok_or_else(|| dx12error::Dx12Error::new("Failed to get fence: fence is None"))
     }
 
-    //フェンスの値を取得
-    pub fn get_fence_value(&self) -> u64 {
-        return self.fence_value;
+    ///フェンスの値を取得
+    ///
+    /// # Returns
+    /// *  'Ok(&u64)' - フェンスの値
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    pub fn get_value(&self) -> std::result::Result<&u64, dx12error::Dx12Error> {
+        self.value.as_ref().ok_or_else(|| {
+            dx12error::Dx12Error::new("Failed to get fence value: fence value is None")
+        })
     }
 
-    //フェンスイベントを取得
-    pub fn get_fence_event(&self) -> HANDLE {
-        return self.fence_event.unwrap();
+    ///フェンスイベントを取得
+    ///
+    /// # Returns
+    /// *  'Ok(&HANDLE)' - フェンスイベント
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    pub fn get_event(&self) -> std::result::Result<&HANDLE, dx12error::Dx12Error> {
+        self.event.as_ref().ok_or_else(|| {
+            dx12error::Dx12Error::new("Failed to get fence event: fence event is None")
+        })
     }
 }

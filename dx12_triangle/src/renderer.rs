@@ -1,17 +1,22 @@
+/// エラー取得用 module
 #[path = "dx12error.rs"]
 mod dx12error;
 use dx12error::Dx12Error;
 
+/// sub module graphics_settings
 #[path = "graphics_settings.rs"]
 mod graphics_settings;
 
+/// sub module swapchain
 #[path = "swapchain.rs"]
 mod swapchain;
 
+/// sub module depthstencil
 #[path = "depthstencil.rs"]
 mod depthstencil;
 use depthstencil::DepthStencil;
 
+///sub module fence
 #[path = "fence.rs"]
 mod fence;
 
@@ -26,52 +31,46 @@ use windows::{
     Win32::Graphics::Dxgi::*, Win32::System::Threading::*,
 };
 
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::rc::Rc;
-use std::sync::Arc;
 
+/// メインレンダリングリソース
+///
+/// # Fields
+/// *  'device' - デバイス
+/// *  'command_queue' - コマンドキュー
+/// *  'command_allocator' - コマンドアロケータ
+/// *  'command_list' - コマンドリスト
+/// *  'fence' - フェンス
+/// *  'swapchain' - スワップチェーン
+/// *  'render_target' - レンダーターゲット
+/// *  'depth_stencil' - 深度ステンシル
+/// *  'viewport' - ビューポート
+/// *  'render_context' - レンダーコンテキスト
+/// *  'scissor_rect' - シザー矩形
+/// *  'frame_index' - 現在のフレームインデックス
 pub struct MainRenderingResources {
-    //デバイス
     device: Option<ID3D12Device>,
-    // フレームバッファの数を設定 (通常は2か3)
-    frame_buffer_count: u32,
-    // 現在のフレームバッファのインデックス
-    current_frame_buffer_index: u32,
-    // コマンドキュー
     command_queue: Option<ID3D12CommandQueue>,
-    // コマンドアロケータ
     command_allocator: Option<ID3D12CommandAllocator>,
-    // コマンドリスト
     command_list: Option<Rc<RefCell<ID3D12GraphicsCommandList4>>>,
-    // フェンス
     fence: fence::Fence,
-    // スワップチェーン (スワップチェーンは、フレームバッファを管理するための仕組み)
     swapchain: swapchain::SwapChain,
-    // レンダーターゲット (レンダーターゲットは、描画結果を保存するためのバッファ)
     render_target: render_target::RenderTarget,
-    // 深度ステンシル (深度バッファやステンシルバッファを管理)
     depth_stencil: DepthStencil,
-    // パイプラインステート (GPUに対する描画の設定を管理)
-    //pipeline_state: Option<ID3D12PipelineState>,
-    // ビューポート
     viewport: D3D12_VIEWPORT,
-    //レンダーコンテキスト
     render_context: render_context::RenderContext,
-    // シザー矩形
     scissor_rect: RECT,
-    //現在のフレームインデックス
     frame_index: u32,
 }
 
+/// MainRenderingResourcesの初期化
 impl Default for MainRenderingResources {
     fn default() -> Self {
         Self {
             device: None,
-            frame_buffer_count: 0,
-            current_frame_buffer_index: 0,
             command_queue: None,
             command_allocator: None,
             command_list: None,
@@ -95,15 +94,20 @@ impl Default for MainRenderingResources {
     }
 }
 
+/// MainRenderingResourcesのcreate methods
 impl MainRenderingResources {
-    //other method
-
-    //初期化関数
+    /// MainRenderingResourcesの生成
+    ///
+    /// # Arguments
+    /// *  'hwnd' - window handle
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
     #[allow(dead_code)]
-    pub fn new(
+    pub fn create(
         hwnd: HWND,
-        frame_buffer_width: u64,
-        frame_buffer_height: u32,
+        width: u64,
+        height: u32,
     ) -> std::result::Result<MainRenderingResources, Box<dyn std::error::Error>> {
         let mut dx12_resources: MainRenderingResources = Default::default();
 
@@ -111,34 +115,28 @@ impl MainRenderingResources {
         let dxgi_factory: Option<IDXGIFactory4> = Some(dx12_resources.create_factory()?);
 
         //デバイスを生成
-        dx12_resources.device = Some(dx12_resources.create_device(dxgi_factory.clone())?);
+        dx12_resources.device = Some(dx12_resources.create_device(&dxgi_factory)?);
 
         //コマンドキュー生成
         dx12_resources.command_queue = Some(dx12_resources.create_commandqueue()?);
 
         //スワップチェイン作成
-        dx12_resources.swapchain = dx12_resources.create_swapchain(
-            dxgi_factory.clone(),
-            &hwnd,
-            frame_buffer_width as u32,
-            frame_buffer_height,
-        )?;
+        dx12_resources.swapchain =
+            dx12_resources.create_swapchain(&dxgi_factory, &hwnd, width as u32, height)?;
 
         //ウィンドウをフルスクリーンに関連付ける
-        dx12_resources.associate_the_window_with_full_screen(dxgi_factory.clone(), &hwnd)?;
+        dx12_resources.associate_the_window_with_full_screen(&dxgi_factory, &hwnd)?;
 
         //rtv ディスクリプタヒープ生成 & サイズ取得
         dx12_resources.render_target = dx12_resources.create_render_target()?;
 
         //dsv ディスクリプタヒープ生成 & サイズ取得
-        dx12_resources.depth_stencil =
-            dx12_resources.create_depth_stencil(frame_buffer_width, frame_buffer_height)?;
+        dx12_resources.depth_stencil = dx12_resources.create_depth_stencil(width, height)?;
 
         //コマンドアロケータの生成
         dx12_resources.command_allocator = Some(dx12_resources.create_command_allocator()?);
 
         //コマンドリストの生成
-
         dx12_resources.command_list =
             Some(Rc::new(RefCell::new(dx12_resources.create_command_list()?)));
 
@@ -149,24 +147,24 @@ impl MainRenderingResources {
         dx12_resources.render_context = dx12_resources.create_render_context()?;
 
         //ビューポート(表示領域を設定)を初期化
-        dx12_resources.viewport = MainRenderingResources::create_viewport(
-            frame_buffer_width as f32,
-            frame_buffer_height as f32,
-        );
+        dx12_resources.viewport =
+            MainRenderingResources::create_viewport(width as f32, height as f32);
 
         //シザリング矩形を初期化
-        dx12_resources.scissor_rect = MainRenderingResources::create_scissor_rect(
-            frame_buffer_width as i32,
-            frame_buffer_height as i32,
-        );
+        dx12_resources.scissor_rect =
+            MainRenderingResources::create_scissor_rect(width as i32, height as i32);
 
         return Ok(dx12_resources);
     }
 }
 
-//create処理の実装
+/// private create methods
 impl MainRenderingResources {
-    //DXGIファクトリ生成
+    /// ファクトリ生成
+    ///
+    /// # Returns
+    /// *  'Ok(IDXGIFactory4)' - ファクトリ
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     fn create_factory(&self) -> std::result::Result<IDXGIFactory4, Dx12Error> {
         //デバッグ時のみ入る
         if cfg!(debug_assertions) {
@@ -189,23 +187,27 @@ impl MainRenderingResources {
         //dxgi factory生成
         match unsafe { CreateDXGIFactory2(dxgi_factory_flags) } {
             Ok(dxgi_factory) => {
-                // 成功した場合の処理
                 println!("Factory creation succeeded");
                 Ok(dxgi_factory)
             }
-            Err(err) => {
-                // 失敗した場合の処理
-                //println!("Factory creation failed with error: {}", err);
-                let errstr: String = format!("Factory creation failed with error:{}", err);
-                Err(Dx12Error::new(&errstr))
-            }
+            Err(err) => Err(Dx12Error::new(&format!(
+                "Failed to create factory: {:?}",
+                err
+            ))),
         }
     }
 
-    //デバイス生成
+    /// デバイス生成
+    ///
+    /// # Arguments
+    /// *  'factory' - ファクトリ
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12Device)' - デバイス
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     fn create_device(
         &self,
-        factory: Option<IDXGIFactory4>,
+        factory: &Option<IDXGIFactory4>,
     ) -> std::result::Result<ID3D12Device, Dx12Error> {
         //主要なGPUベンダー定義
         enum GpuVender {
@@ -234,7 +236,7 @@ impl MainRenderingResources {
             };
 
             //アダプター取得
-            let adapter: IDXGIAdapter1 = match unsafe { factory.EnumAdapters1(i) } {
+            let adapter = match unsafe { factory.EnumAdapters1(i) } {
                 Ok(ap) => ap,
                 Err(_) => {
                     break;
@@ -242,7 +244,7 @@ impl MainRenderingResources {
             };
 
             //グラフィックス能力のあるdescを取得
-            let mut desc: DXGI_ADAPTER_DESC = DXGI_ADAPTER_DESC::default();
+            let mut desc = DXGI_ADAPTER_DESC::default();
             //desc取得チェック
             if let Err(err) = unsafe { adapter.GetDesc(&mut desc) } {
                 return Err(Dx12Error::new(&format!("Failed get device {:?}", err)));
@@ -300,7 +302,7 @@ impl MainRenderingResources {
             Some(adaptor)
         } else {
             //主要ベンダ以外
-            adapter_maximum_video_memory.clone()
+            adapter_maximum_video_memory
         };
 
         //pcによってレベルが異なるため 使用している可能性のあるFEATURE_LEVELを列挙
@@ -316,13 +318,13 @@ impl MainRenderingResources {
         for level in FEATURE_LEVELS {
             let mut device: Option<ID3D12Device> = None;
 
-            if let Some(ref adapter) = use_adapter {
-                match unsafe { D3D12CreateDevice(adapter, level, &mut device) } {
+            if let Some(ref adapter) = use_adapter.as_ref() {
+                match unsafe { D3D12CreateDevice(*adapter, level, &mut device) } {
                     Ok(_) => {
                         //生成に成功したのでdeviceを返す
-                        if let Some(ref d) = device {
+                        if let Some(d) = device {
                             println!("Device creation succeeded");
-                            return Ok(d.clone());
+                            return Ok(d);
                         }
                     }
                     Err(_) => {
@@ -337,17 +339,22 @@ impl MainRenderingResources {
         return Err(Dx12Error::new("Failed to generate device"));
     }
 
-    //コマンドキュー生成
+    /// コマンドキューの生成
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12CommandQueue)' - コマンドキュー
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_commandqueue(&self) -> std::result::Result<ID3D12CommandQueue, Dx12Error> {
         // コマンドキューの設定
-        let command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
+        let command_queue_desc = D3D12_COMMAND_QUEUE_DESC {
             Type: D3D12_COMMAND_LIST_TYPE_DIRECT,
             Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
             ..Default::default()
         };
 
+        //コマンドキューの生成
         if let Some(ref device) = self.device {
-            //コマンドキューの生成
             match unsafe { device.CreateCommandQueue(&command_queue_desc) } {
                 Ok(cmd_queue) => {
                     //成功した場合commandqueueを返す
@@ -360,69 +367,87 @@ impl MainRenderingResources {
                 ))),
             }
         } else {
-            return Err(Dx12Error::new(&format!("Failed to create command queue",)));
+            Err(Dx12Error::new(&format!(
+                "Device not owned, failed to create command queue",
+            )))
         }
     }
 
-    //スワップチェイン作成
+    /// スワップチェーンの生成
+    ///
+    /// # Arguments
+    /// *  'factory' - ファクトリ
+    /// *  'hwnd' - window handle
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
+    /// # Returns
+    /// *  'Ok(SwapChain)' - スワップチェーン
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_swapchain(
         &self,
-        factory: Option<IDXGIFactory4>,
+        factory: &Option<IDXGIFactory4>,
         hwnd: &HWND,
-        frame_buffer_width: u32,
-        frame_buffer_height: u32,
+        width: u32,
+        height: u32,
     ) -> std::result::Result<swapchain::SwapChain, Dx12Error> {
-        if let (Some(factory), Some(cmd_queue)) = (factory.clone(), self.command_queue.clone()) {
-            match swapchain::SwapChain::new(
-                factory,
-                &hwnd,
-                frame_buffer_width,
-                frame_buffer_height,
-                cmd_queue,
-            ) {
-                Ok(sp) => return Ok(sp),
+        if let (Some(f), Some(cmd_queue)) = (factory, self.command_queue.as_ref()) {
+            match swapchain::SwapChain::create(f, &hwnd, width, height, cmd_queue) {
+                Ok(sp) => Ok(sp),
                 Err(err) => Err(Dx12Error::new(&format!(
                     "Failed to create rtv descriptor heap: {:?}",
                     err
                 ))),
             }
         } else {
-            return Err(Dx12Error::new("Failed to create rtv descriptor heap"));
+            Err(Dx12Error::new("Failed to create rtv descriptor heap"))
         }
     }
 
-    //ウィンドウをフルスクリーンに関連付ける
+    /// ウィンドウをフルスクリーンに関連付ける
+    /// # Arguments
+    ///
+    /// *  'factory' - ファクトリ
+    /// *  'hwnd' - window handle
+    ///
+    /// # Returns
+    /// *  'Ok(())' - 成功
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn associate_the_window_with_full_screen(
         &self,
-        factory: Option<IDXGIFactory4>,
+        factory: &Option<IDXGIFactory4>,
         hwnd: &HWND,
     ) -> std::result::Result<(), Dx12Error> {
         //TODO:フルスクリーンに対応させる
         //TODO:imguiでウィンドウ <-> フルスクリーンを行き来できるようにする
 
         //ウィンドウの設定をする
-
         if let Some(ref factory) = factory {
             match unsafe { factory.MakeWindowAssociation(*hwnd, DXGI_MWA_NO_ALT_ENTER) } {
                 Ok(_) => {
                     println!("bind window succeeded");
                     Ok(())
                 }
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed to create swap chain: {:?}",
-                        err
-                    )))
-                }
+                Err(err) => Err(Dx12Error::new(&format!("Failed to bind window: {:?}", err))),
             }
         } else {
-            return Err(Dx12Error::new(&format!("Failed to create swap chain:")));
+            Err(Dx12Error::new(&format!("Failed to create swap chain:")))
         }
     }
 
-    //render taget 生成
+    /// rtv ディスクリプタヒープ生成
+    ///
+    /// # Arguments
+    /// *  'device' - デバイス
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12DescriptorHeap)' - ディスクリプタヒープ
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_render_target(&self) -> std::result::Result<render_target::RenderTarget, Dx12Error> {
-        let swapchain: IDXGISwapChain4 = match self.swapchain.get_dxgi_swapchain() {
+        let swapchain = match self.swapchain.get_dxgi_swapchain() {
             Ok(sc) => sc,
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
@@ -432,8 +457,8 @@ impl MainRenderingResources {
             }
         };
 
-        if let Some(device) = self.device.clone() {
-            match render_target::RenderTarget::new(device, swapchain) {
+        if let Some(device) = self.device.as_ref() {
+            match render_target::RenderTarget::create(device, swapchain) {
                 Ok(rt) => Ok(rt),
                 Err(err) => Err(Dx12Error::new(&format!(
                     "Failed to create render target: {:?}",
@@ -441,52 +466,66 @@ impl MainRenderingResources {
                 ))),
             }
         } else {
-            return Err(Dx12Error::new("Failed to create render target"));
+            Err(Dx12Error::new("Failed to create render target"))
         }
     }
 
-    //dsv ディスクリプタヒープ生成
+    /// dsv ディスクリプタヒープ生成
+    ///
+    /// # Arguments
+    /// *  'device' - デバイス
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
+    /// # Returns
+    /// *  'Ok(DepthStencil)' - 深度ステンシル
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_depth_stencil(
         &self,
-        frame_buffer_width: u64,
-        frame_buffer_height: u32,
+        width: u64,
+        height: u32,
     ) -> std::result::Result<DepthStencil, Dx12Error> {
-        if let Some(device) = self.device.clone() {
-            match DepthStencil::new(device, frame_buffer_width, frame_buffer_height) {
+        if let Some(device) = self.device.as_ref() {
+            match DepthStencil::create(device, width, height) {
                 Ok(ds) => Ok(ds),
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed to create depth stencil: {:?}",
-                        err
-                    )))
-                }
+                Err(err) => Err(Dx12Error::new(&format!(
+                    "Failed to create depth stencil: {:?}",
+                    err
+                ))),
             }
         } else {
-            return Err(Dx12Error::new("Failed to create depth stencil"));
+            Err(Dx12Error::new("Failed to create depth stencil"))
         }
     }
 
-    //コマンドアロケータの生成
+    /// コマンドアロケータの生成
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12CommandAllocator)' - コマンドアロケータ
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     fn create_command_allocator(&self) -> std::result::Result<ID3D12CommandAllocator, Dx12Error> {
         //コマンドアロケータの生成
-        if let Some(device) = self.device.clone() {
+        if let Some(device) = self.device.as_ref() {
             match unsafe { device.CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT) } {
-                Ok(cmda) => return Ok(cmda),
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed to create command allocator: {:?}",
-                        err
-                    )))
-                }
-            };
+                Ok(cmda) => Ok(cmda),
+                Err(err) => Err(Dx12Error::new(&format!(
+                    "Failed to create command allocator: {:?}",
+                    err
+                ))),
+            }
         } else {
-            return Err(Dx12Error::new(&format!(
+            Err(Dx12Error::new(&format!(
                 "Failed to create command allocator"
-            )));
+            )))
         }
     }
 
-    //コマンドリストの生成
+    /// コマンドリストの生成
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12GraphicsCommandList4)' - コマンドリスト
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     fn create_command_list(&self) -> std::result::Result<ID3D12GraphicsCommandList4, Dx12Error> {
         //コマンドリスト生成
         let mut command_list: Option<ID3D12GraphicsCommandList4>;
@@ -527,19 +566,24 @@ impl MainRenderingResources {
         }
 
         //生成したものをreturnする
-        if let Some(cl) = command_list.as_ref() {
+        if let Some(cl) = command_list.clone() {
             println!("commandList creation succeeded");
-            return Ok(cl.clone());
+            return Ok(cl);
         } else {
             return Err(Dx12Error::new("Command list was not properly initialized"));
         }
     }
 
-    //GPUと同期オブジェクト生成
+    /// GPUと同期オブジェクトfenceの生成
+    ///
+    /// # Returns
+    /// *  'Ok(fence::Fence)' - fence
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_fence(&self) -> std::result::Result<fence::Fence, Dx12Error> {
         //fence生成
-        if let Some(device) = self.device.clone() {
-            match fence::Fence::new(device) {
+        if let Some(device) = self.device.as_ref() {
+            match fence::Fence::create(device) {
                 Ok(fence) => {
                     println!("success to create fence");
                     Ok(fence)
@@ -554,13 +598,18 @@ impl MainRenderingResources {
         }
     }
 
-    //render context作成
+    /// レンダーコンテキストの生成
+    ///
+    /// # Returns
+    /// *  'Ok(render_context::RenderContext)' - レンダーコンテキスト
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_render_context(
         &self,
     ) -> std::result::Result<render_context::RenderContext, Dx12Error> {
         //作成
-        if let Some(cmd_list) = self.command_list.clone() {
-            match render_context::RenderContext::new(cmd_list) {
+        if let Some(cmd_list) = self.command_list.as_ref() {
+            match render_context::RenderContext::create(cmd_list) {
                 Ok(rc) => {
                     println!("success to create render context");
                     Ok(rc)
@@ -575,36 +624,59 @@ impl MainRenderingResources {
         }
     }
 
-    //ビューポート(表示領域を設定)作成
-    fn create_viewport(frame_buffer_width: f32, frame_buffer_height: f32) -> D3D12_VIEWPORT {
+    /// ビューポート(表示領域を設定)作成
+    ///
+    /// # Arguments
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
+    /// # Returns
+    /// *  'D3D12_VIEWPORT' - ビューポート
+    ///
+    fn create_viewport(width: f32, height: f32) -> D3D12_VIEWPORT {
         println!("success to create viewport");
-        return D3D12_VIEWPORT {
+        D3D12_VIEWPORT {
             TopLeftX: 0.0,
             TopLeftY: 0.0,
-            Width: frame_buffer_width,
-            Height: frame_buffer_height,
+            Width: width,
+            Height: height,
             MinDepth: D3D12_MIN_DEPTH,
             MaxDepth: D3D12_MAX_DEPTH,
-        };
+        }
     }
 
-    //シザリング矩形作成
-    fn create_scissor_rect(frame_buffer_width: i32, frame_buffer_height: i32) -> RECT {
+    /// シザリング矩形作成
+    ///
+    /// # Arguments
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
+    /// # Returns
+    /// *  'RECT' - シザリング矩形
+    ///
+    fn create_scissor_rect(width: i32, height: i32) -> RECT {
         println!("success to create scissor rect");
-        return RECT {
+        RECT {
             left: 0,
             top: 0,
-            right: frame_buffer_width,
-            bottom: frame_buffer_height,
-        };
+            right: width,
+            bottom: height,
+        }
     }
 }
 
 //レンダリング 開始/終了 処理
 #[allow(dead_code)]
 impl MainRenderingResources {
-    //レンダリング開始処理
-    pub fn begin_render(&mut self) -> std::result::Result<(), Dx12Error> {
+    /// レンダリング開始処理
+    ///
+    /// # Arguments
+    /// *  'clear_color' - クリアカラー(rgba)
+    ///
+    /// # Returns
+    /// *  'Ok(())' - 成功
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    pub fn begin_render(&mut self, clear_color: [f32; 4]) -> std::result::Result<(), Dx12Error> {
         //バックバッファのインデックスを取得
         self.frame_index = match self.swapchain.get_dxgi_swapchain() {
             Ok(sc) => unsafe { sc.GetCurrentBackBufferIndex() },
@@ -619,7 +691,7 @@ impl MainRenderingResources {
         //TODO:カメラを作成する
 
         //コマンドアロケータをリセット
-        if let Some(cmd_allocator) = self.command_allocator.as_mut() {
+        if let Some(cmd_allocator) = self.command_allocator.as_ref() {
             match unsafe { cmd_allocator.Reset() } {
                 Ok(()) => (),
                 Err(err) => {
@@ -634,7 +706,7 @@ impl MainRenderingResources {
         }
 
         //レンダリングコンテキストもリセット
-        if let Some(cmd_allocator) = self.command_allocator.as_mut() {
+        if let Some(cmd_allocator) = self.command_allocator.as_ref() {
             match self.render_context.reset_pso_none(cmd_allocator) {
                 Ok(_) => (),
                 Err(err) => {
@@ -690,16 +762,15 @@ impl MainRenderingResources {
         };
 
         //深度ステンシルバッファのディスクリプタヒープの開始アドレスを取得
-        let current_frame_buffer_dsv_handle: D3D12_CPU_DESCRIPTOR_HANDLE =
-            match self.depth_stencil.get_heap_start() {
-                Ok(dh) => dh,
-                Err(err) => {
-                    return Err(Dx12Error::new(&format!(
-                        "Failed get current frame buffer dsv handle {:?}",
-                        err
-                    )))
-                }
-            };
+        let current_frame_buffer_dsv_handle = match self.depth_stencil.get_heap_start() {
+            Ok(dh) => dh,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed get current frame buffer dsv handle {:?}",
+                    err
+                )))
+            }
+        };
 
         //レンダリングターゲット設定
 
@@ -716,8 +787,6 @@ impl MainRenderingResources {
             }
         }
 
-        //クリアカラー設定
-        let clear_color: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
         //レンダリングターゲットのクリア
         match self
             .render_context
@@ -751,6 +820,12 @@ impl MainRenderingResources {
         return Ok(());
     }
 
+    /// レンダリング終了処理
+    ///
+    /// # Returns
+    /// *  'Ok(())' - 成功
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     pub fn end_render(&mut self) -> std::result::Result<(), Dx12Error> {
         //レンダリングターゲットへの描き込み完了待ち
         match self
@@ -769,7 +844,7 @@ impl MainRenderingResources {
         }
 
         //レンダリングコンテキストを閉じる
-        match self.render_context.close() {
+        match self.render_context.close_command_list() {
             Ok(_) => (),
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
@@ -788,18 +863,19 @@ impl MainRenderingResources {
         }
 
         //コマンドを実行
-        if let Some(cmd_queue) = self.command_queue.clone() {
+        if let Some(cmd_queue) = self.command_queue.as_ref() {
             unsafe { cmd_queue.ExecuteCommandLists(&[command_list]) }
         } else {
             return Err(Dx12Error::new("Failed to execute command list"));
         }
 
-        //
+        //バックバッファとフロントバッファを入れ替える
         match self.swapchain.present() {
             Ok(_) => (),
             Err(err) => return Err(Dx12Error::new(&format!("Failed to present {:?}", err))),
         }
 
+        //描画終了待ち
         match self.wait_draw() {
             Ok(_) => (),
             Err(err) => return Err(Dx12Error::new(&format!("Failed to wait draw {:?}", err))),
@@ -808,14 +884,40 @@ impl MainRenderingResources {
         Ok(())
     }
 
+    /// 描画終了待ち
+    ///
+    /// # Returns
+    /// *  'Ok(())' - 成功
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn wait_draw(&mut self) -> std::result::Result<(), Dx12Error> {
-        //描画終了待ち
-        let fence_value = self.fence.get_fence_value();
+        //fenceの値を取得
+        let fence_value = match self.fence.get_value() {
+            Ok(value) => *value,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to get fence value {:?}",
+                    err
+                )))
+            }
+        };
 
+        //fenceのイベントを取得
+        let fence_event = match self.fence.get_event() {
+            Ok(event) => *event,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to get fence event {:?}",
+                    err
+                )))
+            }
+        };
+
+        //描画終了待ち
         if let Some(cmd_queue) = self.command_queue.as_mut() {
             match self.fence.get_fence() {
                 Ok(fence) => unsafe {
-                    match cmd_queue.Signal(&fence, fence_value) {
+                    match cmd_queue.Signal(fence, fence_value) {
                         Ok(_) => (),
                         Err(err) => {
                             return Err(Dx12Error::new(&format!("Failed to signal {:?}", err)))
@@ -828,15 +930,22 @@ impl MainRenderingResources {
             return Err(Dx12Error::new("Failed to wait draw"));
         }
 
-        self.fence.add_fence_value();
+        //fenceの値をインクリメント
+        match self.fence.add_value() {
+            Ok(()) => (),
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to add fence value {:?}",
+                    err
+                )))
+            }
+        }
 
         //前のフレームが終了するまでまつ
         match self.fence.get_fence() {
             Ok(fence) => {
                 if unsafe { fence.GetCompletedValue() } < fence_value {
-                    match unsafe {
-                        fence.SetEventOnCompletion(fence_value, self.fence.get_fence_event())
-                    } {
+                    match unsafe { fence.SetEventOnCompletion(fence_value, fence_event) } {
                         Ok(_) => (),
                         Err(err) => {
                             return Err(Dx12Error::new(&format!(
@@ -846,12 +955,21 @@ impl MainRenderingResources {
                         }
                     }
 
-                    match unsafe { WaitForSingleObject(self.fence.get_fence_event(), INFINITE) } {
-                        Ok(_) => (),
-                        err => {
+                    let result = unsafe { WaitForSingleObject(fence_event, INFINITE) };
+
+                    match result {
+                        WAIT_OBJECT_0 => (),
+                        WAIT_FAILED => {
+                            let error_code = unsafe { GetLastError() };
                             return Err(Dx12Error::new(&format!(
-                                "Failed to wait for single object {:?}",
-                                err
+                                "Failed to wait for single object, error code: {:?}",
+                                error_code
+                            )));
+                        }
+                        _ => {
+                            return Err(Dx12Error::new(&format!(
+                            "Unexpected result while waiting for single object, result code: {:?}",
+                                result
                             )))
                         }
                     }

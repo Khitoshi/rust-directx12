@@ -1,6 +1,8 @@
+//エラー取得用 module
 #[path = "./dx12error.rs"]
 mod dx12error;
 
+//フレームバッファの数取得用
 #[path = "./graphics_settings.rs"]
 mod graphics_settings;
 
@@ -9,14 +11,18 @@ use windows::{
     Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*,
 };
 
-// スワップチェーン (フレームバッファを管理)
+/// スワップチェーン(フレームバッファを管理)
+///
+/// # Fields
+/// *  'dxgi_swapchain' - スワップチェーン
+/// *  'current_back_buffer_index' - 現在のバックバッファインデックス
+///
 pub struct SwapChain {
-    // スワップチェーン
     dxgi_swapchain: Option<IDXGISwapChain4>,
-    // 現在のバッグバッファインデックス
     current_back_buffer_index: u32,
 }
 
+/// SwapChainの初期化
 impl Default for SwapChain {
     fn default() -> Self {
         Self {
@@ -26,33 +32,35 @@ impl Default for SwapChain {
     }
 }
 
+/// SwapChainのcreate methods
 impl SwapChain {
-    //生成
-    pub fn new(
-        factory: IDXGIFactory4,
+    /// スワップチェーンの生成
+    /// # Arguments
+    /// *  'factory' - ファクトリ
+    /// *  'hwnd' - window handle
+    /// *  'width' - フレームバッファ幅
+    /// *  'height' - フレームバッファ高さ
+    ///
+    pub fn create(
+        factory: &IDXGIFactory4,
         hwnd: &HWND,
-        frame_buffer_width: u32,
-        frame_buffer_height: u32,
-        cmd_queue: ID3D12CommandQueue,
+        width: u32,
+        height: u32,
+        cmd_queue: &ID3D12CommandQueue,
     ) -> std::result::Result<SwapChain, dx12error::Dx12Error> {
         let mut sc: SwapChain = SwapChain::default();
 
         //DXGIスワップチェインを作成
-        sc.dxgi_swapchain = match SwapChain::create_dxgi_swapchain(
-            factory,
-            &hwnd,
-            frame_buffer_width,
-            frame_buffer_height,
-            cmd_queue,
-        ) {
-            Ok(sc) => Some(sc),
-            Err(err) => {
-                return Err(dx12error::Dx12Error::new(&format!(
-                    "Failed to create DXGI swap chain: {:?}",
-                    err
-                )))
-            }
-        };
+        sc.dxgi_swapchain =
+            match SwapChain::create_dxgi_swapchain(factory, &hwnd, width, height, cmd_queue) {
+                Ok(sc) => Some(sc),
+                Err(err) => {
+                    return Err(dx12error::Dx12Error::new(&format!(
+                        "Failed to create DXGI swap chain: {:?}",
+                        err
+                    )))
+                }
+            };
 
         //現在のバックバッファインデックスを取得
         sc.current_back_buffer_index = match sc.get_back_buffer_index() {
@@ -68,13 +76,25 @@ impl SwapChain {
         return Ok(sc);
     }
 
-    //スワップチェイン作成
+    /// DXGIスワップチェインを作成
+    ///
+    /// # Arguments
+    /// *  'factory' - ファクトリ
+    /// *  'hwnd' - window handle
+    /// *  'frame_buffer_width' - フレームバッファ幅
+    /// *  'frame_buffer_height' - フレームバッファ高さ
+    /// *  'cmd_queue' - コマンドキュー
+    ///
+    /// # Returns
+    /// *  'Ok(IDXGISwapChain4)' - スワップチェイン
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
     fn create_dxgi_swapchain(
-        factory: IDXGIFactory4,
+        factory: &IDXGIFactory4,
         hwnd: &HWND,
         frame_buffer_width: u32,
         frame_buffer_hegith: u32,
-        cmd_queue: ID3D12CommandQueue,
+        cmd_queue: &ID3D12CommandQueue,
     ) -> std::result::Result<IDXGISwapChain4, dx12error::Dx12Error> {
         //スワップチェインの設定
         let desc: DXGI_SWAP_CHAIN_DESC1 = DXGI_SWAP_CHAIN_DESC1 {
@@ -91,38 +111,38 @@ impl SwapChain {
             ..Default::default()
         };
 
-        //スワップチェイン1を作成
-        let mut swap_chain1: Option<IDXGISwapChain1> =
-            match unsafe { factory.CreateSwapChainForHwnd(&cmd_queue, *hwnd, &desc, None, None) } {
-                Ok(sc) => Some(sc),
-                Err(err) => {
-                    return Err(dx12error::Dx12Error::new(&format!(
-                        "Failed to create swap chain: {:?}",
-                        err
-                    )));
-                }
-            };
+        //TODO:フルスクリーンの設定
+        let scaling = DXGI_SWAP_CHAIN_FULLSCREEN_DESC {
+            Windowed: TRUE,
+            ..Default::default()
+        };
+        let scaling_option: Option<*const DXGI_SWAP_CHAIN_FULLSCREEN_DESC> =
+            Some(&scaling as *const _);
 
-        //swapchain1 を swapchain4に変換する
-        if let Some(ref sc1) = swap_chain1.as_ref() {
-            match sc1.cast::<IDXGISwapChain4>() {
-                Ok(sc) => return Ok(sc),
-                Err(err) => {
-                    return Err(dx12error::Dx12Error::new(&format!(
-                        "Failed to create swap chian:{:?}",
-                        err
-                    )))
-                }
-            };
-        } else {
-            return Err(dx12error::Dx12Error::new("Failed to create swap chian"));
+        //スワップチェイン1を作成
+        let swap_chain1 = unsafe {
+            factory.CreateSwapChainForHwnd(cmd_queue, *hwnd, &desc, scaling_option, None)
         }
+        .map_err(|err| {
+            dx12error::Dx12Error::new(&format!("Failed to create swap chain: {:?}", err))
+        })?;
+
+        //スワップチェイン4にキャスト
+        swap_chain1.cast::<IDXGISwapChain4>().map_err(|err| {
+            dx12error::Dx12Error::new(&format!("Failed to create swap chian:{:?}", err))
+        })
     }
 
     //バックバッファインデックス取得
+
+    /// 現在のバックバッファインデックスを取得
+    ///
+    /// # Returns
+    /// *  'Ok(u32)' - バックバッファインデックス
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     fn get_back_buffer_index(&self) -> std::result::Result<u32, dx12error::Dx12Error> {
         //現在のバックバッファインデックスを取得
-        if let Some(sc4) = self.dxgi_swapchain.clone() {
+        if let Some(sc4) = self.dxgi_swapchain.as_ref() {
             Ok(unsafe { sc4.GetCurrentBackBufferIndex() })
         } else {
             return Err(dx12error::Dx12Error::new("Swap chain not initialized"));
@@ -130,8 +150,16 @@ impl SwapChain {
     }
 }
 
-//
+/// public methods
 impl SwapChain {
+    /// バックバッファとフロントバッファを入れ替える
+    /// # Arguments
+    /// *  'device' - デバイス
+    /// *  'back_buffer_index' - バックバッファインデックス
+    ///
+    /// # Returns
+    /// *  'Ok(ID3D12Resource)' - バックバッファ
+    /// *  'Err(Dx12Error)' - エラーメッセージ
     pub fn present(&mut self) -> std::result::Result<(), dx12error::Dx12Error> {
         if let Some(sc) = self.dxgi_swapchain.as_mut() {
             match unsafe { sc.Present(1, 0) }.ok() {
@@ -151,13 +179,19 @@ impl SwapChain {
     }
 }
 
-//get method
+/// get method
 impl SwapChain {
-    pub fn get_dxgi_swapchain(&self) -> std::result::Result<IDXGISwapChain4, dx12error::Dx12Error> {
-        if let Some(sc) = self.dxgi_swapchain.as_ref() {
-            Ok(sc.clone())
-        } else {
-            return Err(dx12error::Dx12Error::new("Swap chain not initialized"));
-        }
+    /// スワップチェーン取得
+    ///
+    /// # Returns
+    /// *  'Ok(IDXGISwapChain4)' - スワップチェーン
+    /// *  'Err(Dx12Error)' - エラーメッセージ
+    ///
+    pub fn get_dxgi_swapchain(
+        &self,
+    ) -> std::result::Result<&IDXGISwapChain4, dx12error::Dx12Error> {
+        self.dxgi_swapchain
+            .as_ref()
+            .ok_or_else(|| dx12error::Dx12Error::new("Swap chain not initialized"))
     }
 }

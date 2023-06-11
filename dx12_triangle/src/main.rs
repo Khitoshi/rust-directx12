@@ -2,14 +2,18 @@ mod renderer;
 mod window;
 
 fn main() {
+    //app title name
     let app_name = "triangle test";
-    let window_rect_right: u64 = 1080;
-    let window_rect_bottom: u32 = 720;
 
-    let mut window = match window::Window::new(
+    //window size
+    let window_rect_width: u64 = 1080;
+    let window_rect_height: u32 = 720;
+
+    //window 作成
+    let mut window = match window::Window::create_window(
         app_name,
-        window_rect_right as i32,
-        window_rect_bottom as i32,
+        window_rect_width as i32,
+        window_rect_height as i32,
     ) {
         Ok(window) => window,
         Err(err) => {
@@ -18,10 +22,11 @@ fn main() {
         }
     };
 
-    let mut dx12_resources = match renderer::MainRenderingResources::new(
+    //リソース生成
+    let mut dx12_resources = match renderer::MainRenderingResources::create(
         window.get_hwnd(),
-        window_rect_right,
-        window_rect_bottom,
+        window_rect_width,
+        window_rect_height,
     ) {
         Ok(resource) => resource,
         Err(err) => {
@@ -30,7 +35,8 @@ fn main() {
         }
     };
 
-    match window.process_messages_loop(&mut dx12_resources) {
+    //メッセージループ処理
+    match window.process_messages(&mut dx12_resources) {
         Ok(_) => print!("success!"),
         Err(err) => {
             println!("error!:{}", err);
