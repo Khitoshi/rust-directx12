@@ -981,3 +981,12 @@ impl MainRenderingResources {
         Ok(())
     }
 }
+
+/// get
+impl MainRenderingResources {
+    pub fn get_device(&self) -> std::result::Result<&ID3D12Device, Dx12Error> {
+        self.device
+            .as_ref()
+            .ok_or_else(|| Dx12Error::new("Failed to get device"))
+    }
+}

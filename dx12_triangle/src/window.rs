@@ -7,6 +7,12 @@ use dx12error::Dx12Error;
 #[path = "./renderer.rs"]
 mod renderer;
 
+#[path = "./root_signature.rs"]
+mod root_signature;
+
+#[path = "./triangle.rs"]
+mod triangles;
+
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
@@ -154,6 +160,27 @@ impl Window {
         &mut self,
         resource: &mut crate::renderer::MainRenderingResources,
     ) -> std::result::Result<(), Dx12Error> {
+        //デバイス取得
+        let device = match resource.get_device() {
+            Ok(device) => device,
+            Err(err) => return Err(Dx12Error::new(&format!("Failed to get device: {:?}", err))),
+        };
+
+        //ルートシグネイチャ生成
+        let mut rs: root_signature::RootSignature;
+        rs = match root_signature::RootSignature::create(device) {
+            Ok(rs) => rs,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to create root signature: {:?}",
+                    err
+                )))
+            }
+        };
+
+        //三角形初期化
+        let triangle: triangles::Triangle;
+
         loop {
             let mut msg = MSG::default();
             //メッセージが存在するか確認，存在する場合msgに格納

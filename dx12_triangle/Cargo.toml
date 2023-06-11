@@ -23,4 +23,5 @@ features = [
     "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Hlsl",
 ]

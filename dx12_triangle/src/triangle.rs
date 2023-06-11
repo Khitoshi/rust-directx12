@@ -1,16 +1,17 @@
+#[path = "./shader.rs"]
+mod shader;
+
 // モデルデータ (ここではトライアングル)
 pub struct Triangle {
-    // 頂点バッファ
-    vertex_buffer: Option<ID3D12Resource>,
-    // 頂点バッファビュー
-    vertex_buffer_view: D3D12_VERTEX_BUFFER_VIEW,
+    vertes_shader: shader::Shader,
+    pixcel_shader: shader::Shader,
 }
 
 impl Default for Triangle {
     fn default() -> Self {
         Self {
-            vertex_buffer: None,
-            vertex_buffer_view: None,
+            vertes_shader: None,
+            pixcel_shader: None,
         }
     }
 }
