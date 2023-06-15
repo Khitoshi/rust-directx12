@@ -1,9 +1,15 @@
 #[path = "./dx12error.rs"]
 mod dx12error;
 
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::rc::Rc;
-use windows::{Win32::Foundation::*, Win32::Graphics::Direct3D12::*};
+use windows::{
+    core::*, Win32::Foundation::*, Win32::Graphics::Direct3D::Fxc::*, Win32::Graphics::Direct3D::*,
+    Win32::Graphics::Direct3D12::*, Win32::Graphics::Dxgi::Common::*, Win32::Graphics::Dxgi::*,
+    Win32::Graphics::Hlsl::*, Win32::System::LibraryLoader::*, Win32::System::Threading::*,
+    Win32::UI::WindowsAndMessaging::*,
+};
 
 /// レンダリングコンテキスト
 ///
@@ -68,23 +74,15 @@ impl RenderContext {
         pipeline_state: Option<&ID3D12PipelineState>,
     ) -> std::result::Result<(), dx12error::Dx12Error> {
         //コマンドリストリセット
-        if let Some(cmd_list) = self.command_list.as_mut() {
-            unsafe {
-                if let Some(pipeline_state) = pipeline_state {
-                    match cmd_list.borrow_mut().Reset(cmd_allocator, pipeline_state) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            return Err(dx12error::Dx12Error::new(&format!(
-                                "Failed to reset command list: {:?}",
-                                err
-                            )))
-                        }
-                    }
-                } else {
+        if let (Some(cmd_list), Some(ps)) = (self.command_list.as_ref(), pipeline_state) {
+            let mut cl = cmd_list.borrow_mut();
+            match unsafe { cmd_list.borrow_mut().Reset(cmd_allocator, ps) } {
+                Ok(_) => (),
+                Err(err) => {
                     return Err(dx12error::Dx12Error::new(&format!(
                         "Failed to reset command list: {:?}",
-                        "pipeline state is none"
-                    )));
+                        err
+                    )))
                 }
             }
         } else {
@@ -112,9 +110,9 @@ impl RenderContext {
     pub fn reset_pso_none(
         &mut self,
         cmd_allocator: &ID3D12CommandAllocator,
-    ) -> Result<(), dx12error::Dx12Error> {
+    ) -> std::result::Result<(), dx12error::Dx12Error> {
         //コマンドリストリセット
-        if let Some(cmd_list) = self.command_list.as_ref() {
+        if let Some(cmd_list) = self.command_list.as_mut() {
             match unsafe { cmd_list.borrow_mut().Reset(cmd_allocator, None) } {
                 Ok(_) => (),
                 Err(err) => {
@@ -193,8 +191,6 @@ impl RenderContext {
 
         Ok(())
     }
-
-    //レンダリングターゲットのクリア
 
     /// レンダリングターゲットのクリア
     ///
@@ -401,7 +397,7 @@ impl RenderContext {
         }
 
         //ビューポート設定
-        if let Some(cmd_list) = self.command_list.as_mut() {
+        if let Some(cmd_list) = self.command_list.as_ref() {
             unsafe {
                 cmd_list.borrow_mut().RSSetViewports(&[viewport.clone()]);
             }

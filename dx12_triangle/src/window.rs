@@ -7,11 +7,14 @@ use dx12error::Dx12Error;
 #[path = "./renderer.rs"]
 mod renderer;
 
+/*
 #[path = "./root_signature.rs"]
 mod root_signature;
+use root_signature::RootSignature;
 
 #[path = "./triangle.rs"]
 mod triangles;
+*/
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -166,9 +169,9 @@ impl Window {
             Err(err) => return Err(Dx12Error::new(&format!("Failed to get device: {:?}", err))),
         };
 
+        /*
         //ルートシグネイチャ生成
-        let mut rs: root_signature::RootSignature;
-        rs = match root_signature::RootSignature::create(device) {
+        let mut rs = match RootSignature::create(device) {
             Ok(rs) => rs,
             Err(err) => {
                 return Err(Dx12Error::new(&format!(
@@ -179,7 +182,16 @@ impl Window {
         };
 
         //三角形初期化
-        let triangle: triangles::Triangle;
+        let triangle = match triangles::Triangle::init(device, &rs) {
+            Ok(t) => t,
+            Err(err) => {
+                return Err(Dx12Error::new(&format!(
+                    "Failed to init triangle: {:?}",
+                    err
+                )))
+            }
+        };
+        */
 
         loop {
             let mut msg = MSG::default();
@@ -210,7 +222,7 @@ impl Window {
                     }
                 }
 
-                //TODO:　ここに描画処理を記述
+                //TODO: ここに描画処理を記述
 
                 //描画初期処理
                 match resource.end_render() {
